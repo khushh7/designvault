@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.designvault/
+.DS_Store
+*.log

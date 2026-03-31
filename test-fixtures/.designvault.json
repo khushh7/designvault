@@ -1,0 +1,21 @@
+{
+  "favorites": [],
+  "tags": {},
+  "notes": {},
+  "projects": {},
+  "statuses": {
+    "lvdqr8": "done",
+    "7m5kx6": "wip"
+  },
+  "manualGroups": {},
+  "projectList": [
+    {
+      "name": "Test 1",
+      "color": "#e67e22"
+    },
+    {
+      "name": "test-fixtures",
+      "color": "#27ae60"
+    }
+  ]
+}

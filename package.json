@@ -1,0 +1,39 @@
+{
+  "name": "designvault",
+  "version": "1.0.0",
+  "description": "Visual gallery for AI-generated design files. Browse, organize, and manage HTML/JSX/SVG files from Claude Code, Cursor, and Codex.",
+  "bin": {
+    "designvault": "./cli.js"
+  },
+  "files": [
+    "cli.js",
+    "server/",
+    "dist/"
+  ],
+  "scripts": {
+    "build:frontend": "cd frontend && npm install && npm run build",
+    "prepare": "npm run build:frontend",
+    "dev:server": "node cli.js ./test-fixtures",
+    "dev:frontend": "cd frontend && npm run dev"
+  },
+  "keywords": [
+    "design",
+    "gallery",
+    "html",
+    "jsx",
+    "svg",
+    "ai",
+    "claude",
+    "cursor",
+    "codex",
+    "preview"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "fast-glob": "^3.3.2",
+    "open": "^10.1.0"
+  }
+}
