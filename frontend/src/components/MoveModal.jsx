@@ -1,13 +1,23 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import useDialogA11y from './useDialogA11y'
 
 export default function MoveModal({ file, config, onClose, onMove }) {
   const [selected, setSelected] = useState('')
   const projects = config?.projectList || []
+  const modalRef = useRef(null)
+  useDialogA11y(modalRef, onClose, '.btn-secondary')
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Move {file.filename}</h3>
+      <div
+        ref={modalRef}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="move-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id="move-modal-title">Move {file.filename}</h3>
         <p>Assign this file to a project:</p>
         <div className="folder-list">
           {projects.length === 0 && (
@@ -16,14 +26,15 @@ export default function MoveModal({ file, config, onClose, onMove }) {
             </div>
           )}
           {projects.map((p) => (
-            <div
+            <button
               key={p.name}
               className={`folder-item ${selected === p.name ? 'selected' : ''}`}
+              aria-pressed={selected === p.name}
               onClick={() => setSelected(p.name)}
             >
               <span className="dot" style={{ background: p.color, width: 8, height: 8, borderRadius: '50%' }} />
               {p.name}
-            </div>
+            </button>
           ))}
         </div>
         <div className="modal-actions">

@@ -49,6 +49,7 @@ const PAGE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.html', '.htm'])
 const LOCAL_PREVIEW_PORT_PREFERENCE = [3000, 3001, 3002, 3003, 4173, 4321, 5173, 8080, 8787];
 const PREVIEW_BASE_URL_CACHE_TTL_MS = 5000;
 const previewBaseUrlCache = new Map();
+const LOCAL_DIST_PREVIEW_BASE = '/__project_preview__';
 
 function simpleHash(str) {
   let hash = 0;
@@ -117,6 +118,23 @@ function isNonRoutableSegment(segment) {
 
 function normalizeRouteSegments(segments) {
   return segments.filter((segment) => !isNonRoutableSegment(segment));
+}
+
+function joinRoutePaths(parentPath, childPath, isIndex = false) {
+  if (isIndex) return parentPath || '/';
+  if (!childPath) return parentPath || '/';
+  if (childPath.startsWith('/')) return childPath;
+
+  const base = parentPath && parentPath !== '/' ? parentPath.replace(/\/+$/, '') : '';
+  return `${base}/${childPath}`.replace(/\/+/g, '/');
+}
+
+function createPreviewRoutePath(routePath) {
+  if (!routePath) return '/';
+  return routePath
+    .replace(/:([A-Za-z0-9_]+)/g, 'preview')
+    .replace(/\*/g, 'preview')
+    .replace(/\/+/g, '/');
 }
 
 function buildRouteMeta(routePath) {
@@ -194,6 +212,292 @@ function getRouteMeta(relativePath) {
   return getAppRouteMeta(relativePath) || getPagesRouteMeta(relativePath) || getHtmlRouteMeta(relativePath);
 }
 
+function findMatchingBracket(text, startIndex, openChar, closeChar) {
+  let depth = 0;
+  let inString = false;
+  let stringQuote = '';
+  let escaping = false;
+
+  for (let i = startIndex; i < text.length; i++) {
+    const char = text[i];
+
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+        continue;
+      }
+      if (char === '\\') {
+        escaping = true;
+        continue;
+      }
+      if (char === stringQuote) {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === '`') {
+      inString = true;
+      stringQuote = char;
+      continue;
+    }
+
+    if (char === openChar) depth++;
+    if (char === closeChar) depth--;
+    if (depth === 0) return i;
+  }
+
+  return -1;
+}
+
+function tokenizeRouteConfig(source) {
+  const tokens = [];
+  let i = 0;
+
+  while (i < source.length) {
+    const char = source[i];
+
+    if (/\s/.test(char)) {
+      i++;
+      continue;
+    }
+
+    if (char === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') i++;
+      continue;
+    }
+
+    if (char === '/' && source[i + 1] === '*') {
+      i += 2;
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+
+    if ('{}[]:,'.includes(char)) {
+      tokens.push({ type: char, value: char });
+      i++;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      const quote = char;
+      let value = '';
+      i++;
+      while (i < source.length) {
+        const current = source[i];
+        if (current === '\\') {
+          value += source[i + 1] || '';
+          i += 2;
+          continue;
+        }
+        if (current === quote) {
+          i++;
+          break;
+        }
+        value += current;
+        i++;
+      }
+      tokens.push({ type: 'string', value });
+      continue;
+    }
+
+    const identifierMatch = source.slice(i).match(/^[A-Za-z_$][A-Za-z0-9_$-]*/);
+    if (identifierMatch) {
+      const value = identifierMatch[0];
+      tokens.push({
+        type: value === 'true' || value === 'false' ? 'boolean' : 'identifier',
+        value: value === 'true' ? true : value === 'false' ? false : value,
+      });
+      i += value.length;
+      continue;
+    }
+
+    i++;
+  }
+
+  return tokens;
+}
+
+function parseRouteConfigValue(tokens, index = 0) {
+  const token = tokens[index];
+  if (!token) return { value: null, nextIndex: index };
+
+  if (token.type === 'string' || token.type === 'boolean') {
+    return { value: token.value, nextIndex: index + 1 };
+  }
+
+  if (token.type === 'identifier') {
+    return { value: { type: 'identifier', value: token.value }, nextIndex: index + 1 };
+  }
+
+  if (token.type === '[') {
+    const items = [];
+    let cursor = index + 1;
+    while (tokens[cursor] && tokens[cursor].type !== ']') {
+      if (tokens[cursor].type === ',') {
+        cursor++;
+        continue;
+      }
+      const parsed = parseRouteConfigValue(tokens, cursor);
+      items.push(parsed.value);
+      cursor = parsed.nextIndex;
+      if (tokens[cursor] && tokens[cursor].type === ',') cursor++;
+    }
+    return { value: items, nextIndex: cursor + 1 };
+  }
+
+  if (token.type === '{') {
+    const obj = {};
+    let cursor = index + 1;
+    while (tokens[cursor] && tokens[cursor].type !== '}') {
+      if (tokens[cursor].type === ',') {
+        cursor++;
+        continue;
+      }
+      const keyToken = tokens[cursor];
+      const key = keyToken?.type === 'identifier' || keyToken?.type === 'string' ? keyToken.value : null;
+      cursor++;
+      if (tokens[cursor] && tokens[cursor].type === ':') cursor++;
+      const parsed = parseRouteConfigValue(tokens, cursor);
+      obj[key] = parsed.value;
+      cursor = parsed.nextIndex;
+      if (tokens[cursor] && tokens[cursor].type === ',') cursor++;
+    }
+    return { value: obj, nextIndex: cursor + 1 };
+  }
+
+  return { value: null, nextIndex: index + 1 };
+}
+
+function resolveImportPath(importerRelativePath, importPath) {
+  if (!importPath.startsWith('.')) return null;
+
+  const importerDir = path.dirname(importerRelativePath);
+  const candidateBase = path.posix.normalize(path.posix.join(importerDir, importPath));
+  const candidates = [
+    candidateBase,
+    `${candidateBase}.ts`,
+    `${candidateBase}.tsx`,
+    `${candidateBase}.js`,
+    `${candidateBase}.jsx`,
+    path.posix.join(candidateBase, 'index.ts'),
+    path.posix.join(candidateBase, 'index.tsx'),
+    path.posix.join(candidateBase, 'index.js'),
+    path.posix.join(candidateBase, 'index.jsx'),
+  ];
+
+  return candidates;
+}
+
+async function detectReactRouterRoutes(rootDir) {
+  const routeFiles = await fg(['**/routes.{js,jsx,ts,tsx}'], {
+    cwd: rootDir,
+    ignore: [
+      '**/node_modules/**',
+      '**/.*/**',
+      '**/dist/**',
+      '**/build/**',
+      '**/.next/**',
+    ],
+    absolute: false,
+    suppressErrors: true,
+  });
+
+  const routeMap = new Map();
+
+  for (const routeFile of routeFiles) {
+    let source;
+    try {
+      source = await fs.promises.readFile(path.join(rootDir, routeFile), 'utf8');
+    } catch {
+      continue;
+    }
+
+    if (!source.includes('createBrowserRouter')) continue;
+
+    const importMap = new Map();
+    const importRegex = /import\s+(?:\{([^}]+)\}|([A-Za-z_$][\w$]*))\s+from\s+["']([^"']+)["'];?/g;
+    let importMatch;
+    while ((importMatch = importRegex.exec(source))) {
+      const namedImports = importMatch[1];
+      const defaultImport = importMatch[2];
+      const importPath = importMatch[3];
+      const resolvedCandidates = resolveImportPath(routeFile, importPath);
+      if (!resolvedCandidates) continue;
+
+      if (defaultImport) {
+        importMap.set(defaultImport, resolvedCandidates);
+      }
+
+      if (namedImports) {
+        namedImports
+          .split(',')
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+          .forEach((entry) => {
+            const parts = entry.split(/\s+as\s+/i).map((part) => part.trim());
+            const localName = parts[1] || parts[0];
+            importMap.set(localName, resolvedCandidates);
+          });
+      }
+    }
+
+    const startToken = 'createBrowserRouter';
+    const routerIndex = source.indexOf(startToken);
+    if (routerIndex === -1) continue;
+    const arrayStart = source.indexOf('[', routerIndex);
+    if (arrayStart === -1) continue;
+    const arrayEnd = findMatchingBracket(source, arrayStart, '[', ']');
+    if (arrayEnd === -1) continue;
+
+    const routeArraySource = source.slice(arrayStart, arrayEnd + 1);
+    const parsed = parseRouteConfigValue(tokenizeRouteConfig(routeArraySource), 0);
+    const routes = Array.isArray(parsed.value) ? parsed.value : [];
+
+    const registerRoutes = (nodes, parentPath = '') => {
+      for (const node of nodes) {
+        if (!node || typeof node !== 'object' || Array.isArray(node)) continue;
+
+        const childPath = typeof node.path === 'string' ? node.path : '';
+        const isIndex = node.index === true;
+        const fullPath = joinRoutePaths(parentPath, childPath, isIndex);
+        const children = Array.isArray(node.children) ? node.children : [];
+        const componentIdentifier = node.Component?.type === 'identifier' ? node.Component.value : null;
+
+        if (componentIdentifier && children.length === 0) {
+          const candidates = importMap.get(componentIdentifier) || [];
+          for (const candidate of candidates) {
+            routeMap.set(candidate, {
+              ...buildRouteMeta(fullPath),
+              kind: 'route',
+              routeSource: 'react-router',
+            });
+          }
+        }
+
+        if (children.length > 0) {
+          registerRoutes(children, fullPath);
+        }
+      }
+    };
+
+    registerRoutes(routes);
+  }
+
+  return routeMap;
+}
+
+function detectLocalBuiltPreviewRoot(rootDir) {
+  for (const dirName of ['dist', 'build']) {
+    const indexFile = path.join(rootDir, dirName, 'index.html');
+    if (fs.existsSync(indexFile)) {
+      return LOCAL_DIST_PREVIEW_BASE;
+    }
+  }
+  return null;
+}
+
 function normalizePreviewBaseUrl(value) {
   if (!value || typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -238,11 +542,12 @@ async function detectRunningLocalPreviewBaseUrl(rootDir) {
   const lines = listeningPortsOutput.split('\n').slice(1);
 
   for (const line of lines) {
-    const match = line.match(/^\S+\s+(\d+)\s+\S+.*TCP\s+.*:(\d+)\s+\(LISTEN\)$/);
+    const match = line.match(/^\S+\s+(\d+)\s+\S+.*TCP\s+(.+):(\d+)\s+\(LISTEN\)$/);
     if (!match) continue;
 
     const pid = match[1];
-    const port = Number(match[2]);
+    const address = match[2];
+    const port = Number(match[3]);
     if (!Number.isFinite(port)) continue;
 
     try {
@@ -250,7 +555,7 @@ async function detectRunningLocalPreviewBaseUrl(rootDir) {
       const cwdLine = cwdOutput.split('\n').find((entry) => entry.startsWith('n'));
       const cwd = cwdLine ? cwdLine.slice(1) : '';
       if (cwd === rootDir) {
-        candidates.push(port);
+        candidates.push({ port, address });
       }
     } catch {}
   }
@@ -258,14 +563,28 @@ async function detectRunningLocalPreviewBaseUrl(rootDir) {
   if (candidates.length === 0) return null;
 
   candidates.sort((a, b) => {
-    const aIndex = LOCAL_PREVIEW_PORT_PREFERENCE.indexOf(a);
-    const bIndex = LOCAL_PREVIEW_PORT_PREFERENCE.indexOf(b);
-    const aScore = aIndex === -1 ? LOCAL_PREVIEW_PORT_PREFERENCE.length + a : aIndex;
-    const bScore = bIndex === -1 ? LOCAL_PREVIEW_PORT_PREFERENCE.length + b : bIndex;
+    const aIndex = LOCAL_PREVIEW_PORT_PREFERENCE.indexOf(a.port);
+    const bIndex = LOCAL_PREVIEW_PORT_PREFERENCE.indexOf(b.port);
+    const aScore = aIndex === -1 ? LOCAL_PREVIEW_PORT_PREFERENCE.length + a.port : aIndex;
+    const bScore = bIndex === -1 ? LOCAL_PREVIEW_PORT_PREFERENCE.length + b.port : bIndex;
     return aScore - bScore;
   });
 
-  return `http://127.0.0.1:${candidates[0]}`;
+  for (const candidate of candidates) {
+    const urls = [
+      `http://localhost:${candidate.port}`,
+      candidate.address.includes('::') ? `http://[::1]:${candidate.port}` : null,
+      `http://127.0.0.1:${candidate.port}`,
+    ].filter(Boolean);
+
+    for (const url of urls) {
+      if (await isReachablePreviewBaseUrl(url)) {
+        return url;
+      }
+    }
+  }
+
+  return `http://localhost:${candidates[0].port}`;
 }
 
 async function isReachablePreviewBaseUrl(baseUrl) {
@@ -301,6 +620,9 @@ async function detectPreviewBaseUrl(rootDir) {
 
   const localPreviewBaseUrl = await detectRunningLocalPreviewBaseUrl(rootDir);
   if (localPreviewBaseUrl) return remember(localPreviewBaseUrl);
+
+  const localBuiltPreviewBase = detectLocalBuiltPreviewRoot(rootDir);
+  if (localBuiltPreviewBase) return remember(localBuiltPreviewBase);
 
   const configFile = path.join(rootDir, '.designvault.json');
   try {
@@ -372,6 +694,7 @@ async function detectPreviewBaseUrl(rootDir) {
 
 async function scanDirectory(rootDir) {
   const previewBaseUrl = await detectPreviewBaseUrl(rootDir);
+  const reactRouterRoutes = await detectReactRouterRoutes(rootDir);
   const entries = await fg(['**/*.{html,htm,jsx,tsx,svg}'], {
     cwd: rootDir,
     ignore: [
@@ -401,10 +724,11 @@ async function scanDirectory(rootDir) {
         const ext = path.extname(relativePath).slice(1);
         const filename = path.basename(relativePath);
         const name = path.basename(relativePath, path.extname(relativePath));
-        const routeMeta = getRouteMeta(relativePath);
+        const routeMeta = reactRouterRoutes.get(relativePath) || getRouteMeta(relativePath);
+        const previewPath = routeMeta?.kind === 'route' ? createPreviewRoutePath(routeMeta.routePath) : '';
         const previewUrl =
           routeMeta?.kind === 'route' && previewBaseUrl
-            ? `${previewBaseUrl}${routeMeta.routePath === '/' ? '' : routeMeta.routePath}`
+            ? `${previewBaseUrl}${previewPath === '/' ? '' : previewPath}`
             : null;
 
         // A file is previewable if it can render visually in a browser
@@ -433,7 +757,7 @@ async function scanDirectory(rootDir) {
     })
   )).filter(Boolean);
 
-  const hasProjectRoutes = files.some((file) => file.routeSource === 'app' || file.routeSource === 'pages');
+  const hasProjectRoutes = files.some((file) => file.kind === 'route');
   const visibleFiles = hasProjectRoutes
     ? files.filter((file) => file.kind === 'route')
     : files;

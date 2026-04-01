@@ -1,16 +1,28 @@
+import { useRef } from 'react'
 import { api } from '../api'
+import useDialogA11y from './useDialogA11y'
 
 export default function DeleteModal({ file, onClose, onConfirm }) {
+  const modalRef = useRef(null)
+  useDialogA11y(modalRef, onClose, '.btn-secondary')
+
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Delete {file.filename}?</h3>
+      <div
+        ref={modalRef}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id="delete-modal-title">Delete {file.filename}?</h3>
         <div className="modal-preview">
           {file.extension === 'svg' ? (
-            <img src={api.getFileContent(file.id)} alt={file.name} style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 12 }} />
+            <img src={api.getFileContent(file.id, file.sourceRootDir)} alt={file.name} style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 12 }} />
           ) : (
             <iframe
-              src={api.getFileContent(file.id)}
+              src={api.getFileContent(file.id, file.sourceRootDir)}
               sandbox="allow-same-origin"
               title={file.name}
             />

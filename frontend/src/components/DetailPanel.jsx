@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { api } from '../api'
 import VersionTimeline from './VersionTimeline'
 import CompareView from './CompareView'
+import useDialogA11y from './useDialogA11y'
 
 export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSetTags, onSetNote, onDelete, onDuplicate, onMove, showToast }) {
   const [editingName, setEditingName] = useState(false)
@@ -10,6 +11,10 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
   const [tagInput, setTagInput] = useState('')
   const [noteValue, setNoteValue] = useState(file.note || '')
   const [showCompare, setShowCompare] = useState(false)
+  const [previewFailed, setPreviewFailed] = useState(false)
+  const panelRef = useRef(null)
+
+  useDialogA11y(panelRef, onClose, '.detail-close')
 
   useEffect(() => {
     setNameValue(file.name)
@@ -17,6 +22,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
     setShowCompare(false)
     setEditingName(false)
     setAddingTag(false)
+    setPreviewFailed(false)
   }, [file.id, file.name, file.note])
 
   const handleNameSubmit = () => {
@@ -42,7 +48,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
 
   const copyCode = async () => {
     try {
-      const res = await fetch(api.getFileContent(file.id))
+      const res = await fetch(api.getFileContent(file.id, file.sourceRootDir))
       const text = await res.text()
       await navigator.clipboard.writeText(text)
       showToast('Code copied to clipboard')
@@ -54,27 +60,42 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
   const isCode = file.extension === 'jsx' || file.extension === 'tsx'
   const hasVersions = file.versions && file.versions.length > 1
   const title = file.displayName || file.name
-  const browserTarget = file.previewUrl || api.getFileContent(file.id)
+  const browserTarget = file.previewUrl || api.getFileContent(file.id, file.sourceRootDir)
 
   return (
     <>
       <div className="detail-overlay" onClick={onClose} />
-      <div className="detail-panel">
-        <button className="detail-close" onClick={onClose}>×</button>
+      <div
+        ref={panelRef}
+        className="detail-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="detail-panel-title"
+      >
+        <button className="detail-close" aria-label="Close detail panel" onClick={onClose}>×</button>
 
         <div className="detail-preview">
           {file.extension === 'svg' ? (
-            <img src={api.getFileContent(file.id)} alt={title} />
-          ) : file.previewUrl ? (
+            <img src={api.getFileContent(file.id, file.sourceRootDir)} alt={title} />
+          ) : file.previewUrl && !previewFailed ? (
             <iframe
               src={file.previewUrl}
               title={title}
+              onError={() => setPreviewFailed(true)}
             />
+          ) : file.previewUrl && previewFailed ? (
+            <div className="preview-fallback detail-preview-fallback">
+              <span className="preview-fallback-title">Preview unavailable</span>
+              <span className="preview-fallback-copy">This page could not be embedded, but you can still open it in a browser.</span>
+              <button className="detail-action-btn primary" onClick={() => window.open(browserTarget, '_blank')}>
+                Open live page
+              </button>
+            </div>
           ) : isCode ? (
-            <CodePreview fileId={file.id} />
+            <CodePreview fileId={file.id} rootDir={file.sourceRootDir} />
           ) : (
             <iframe
-              src={api.getFileContent(file.id)}
+              src={api.getFileContent(file.id, file.sourceRootDir)}
               sandbox="allow-same-origin"
               title={title}
             />
@@ -85,6 +106,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
           {/* Name */}
           {editingName && !file.routePath ? (
             <input
+              id="detail-panel-title"
               className="detail-name"
               value={nameValue}
               onChange={(e) => setNameValue(e.target.value)}
@@ -93,13 +115,18 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
               autoFocus
             />
           ) : (
-            <div
-              className="detail-name"
-              onClick={() => { if (!file.routePath) setEditingName(true) }}
-              style={{ cursor: file.routePath ? 'default' : 'pointer' }}
-            >
-              {title}
-            </div>
+            file.routePath ? (
+              <h2 id="detail-panel-title" className="detail-name detail-heading">{title}</h2>
+            ) : (
+              <button
+                id="detail-panel-title"
+                className="detail-name detail-title-button"
+                onClick={() => setEditingName(true)}
+                aria-label={`Rename ${title}`}
+              >
+                {title}
+              </button>
+            )
           )}
 
           {/* Meta */}
@@ -122,8 +149,8 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
                     {showCompare ? 'Hide compare' : 'Compare'}
                   </button>
                 </div>
-                {showCompare && <CompareView versions={file.versions} />}
-                <VersionTimeline versions={file.versions} showToast={showToast} />
+                {showCompare && <CompareView versions={file.versions} rootDir={file.sourceRootDir} />}
+                <VersionTimeline versions={file.versions} rootDir={file.sourceRootDir} showToast={showToast} />
               </div>
             </div>
           )}
@@ -136,6 +163,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
                 <button
                   key={s}
                   className={`status-pill ${file.status === s ? `active-${s}` : ''}`}
+                  aria-pressed={file.status === s}
                   onClick={() => onSetStatus(file.id, s)}
                 >
                   {s === 'wip' ? 'In Progress' : s.charAt(0).toUpperCase() + s.slice(1)}
@@ -151,7 +179,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
               {(file.tags || []).map((tag) => (
                 <span key={tag} className="tag">
                   {tag}
-                  <button className="remove-tag" onClick={() => handleRemoveTag(tag)}>×</button>
+                  <button className="remove-tag" aria-label={`Remove tag ${tag}`} onClick={() => handleRemoveTag(tag)}>×</button>
                 </span>
               ))}
               {addingTag ? (
@@ -162,6 +190,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
                   onBlur={handleAddTag}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleAddTag(); if (e.key === 'Escape') setAddingTag(false) }}
                   autoFocus
+                  aria-label="Add a tag"
                   placeholder="tag name..."
                 />
               ) : (
@@ -178,6 +207,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
               value={noteValue}
               onChange={(e) => setNoteValue(e.target.value)}
               onBlur={() => onSetNote(file.id, noteValue)}
+              aria-label="Notes"
               placeholder="Add notes about this design..."
             />
           </div>
@@ -190,7 +220,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
 
           {/* Actions */}
           <div className="detail-actions">
-            <button className="detail-action-btn" onClick={() => window.open(browserTarget, '_blank')}>
+            <button className="detail-action-btn primary" onClick={() => window.open(browserTarget, '_blank')}>
               {file.previewUrl ? 'Open live page' : 'Open in browser'}
             </button>
             <button className="detail-action-btn" onClick={copyCode}>
@@ -202,7 +232,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
             <button className="detail-action-btn" onClick={() => onMove(file)}>
               Move
             </button>
-            <button className="detail-action-btn" style={{ color: 'var(--red)' }} onClick={() => onDelete(file)}>
+            <button className="detail-action-btn danger" onClick={() => onDelete(file)}>
               Delete
             </button>
           </div>
@@ -212,14 +242,14 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
   )
 }
 
-function CodePreview({ fileId }) {
+function CodePreview({ fileId, rootDir }) {
   const [code, setCode] = useState('')
   useEffect(() => {
-    fetch(api.getFileContent(fileId))
+    fetch(api.getFileContent(fileId, rootDir))
       .then((r) => r.text())
       .then((t) => setCode(t.split('\n').slice(0, 30).join('\n')))
       .catch(() => {})
-  }, [fileId])
+  }, [fileId, rootDir])
 
   return (
     <div className="code-preview" style={{ padding: 16, height: '100%', overflow: 'hidden' }}>

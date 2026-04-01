@@ -1,6 +1,6 @@
 import { api } from '../api'
 
-export default function CompareView({ versions }) {
+export default function CompareView({ versions, rootDir }) {
   if (!versions || versions.length < 2) return null
 
   const sorted = [...versions].sort((a, b) => new Date(a.modifiedAt) - new Date(b.modifiedAt))
@@ -12,7 +12,7 @@ export default function CompareView({ versions }) {
       <div className="compare-pane">
         <div className="compare-pane-label">{first.label} — {first.filename}</div>
         <iframe
-          src={api.getFileContent(first.id)}
+          src={api.getFileContent(first.id, rootDir)}
           sandbox="allow-same-origin"
           title={first.filename}
         />
@@ -20,7 +20,7 @@ export default function CompareView({ versions }) {
       <div className="compare-pane">
         <div className="compare-pane-label">{last.label} — {last.filename}</div>
         <iframe
-          src={api.getFileContent(last.id)}
+          src={api.getFileContent(last.id, rootDir)}
           sandbox="allow-same-origin"
           title={last.filename}
         />

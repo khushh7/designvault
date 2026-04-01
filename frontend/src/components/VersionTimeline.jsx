@@ -1,11 +1,11 @@
 import { api } from '../api'
 
-export default function VersionTimeline({ versions, showToast }) {
+export default function VersionTimeline({ versions, rootDir, showToast }) {
   const sorted = [...versions].sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt))
 
   const copyCode = async (id) => {
     try {
-      const res = await fetch(api.getFileContent(id))
+      const res = await fetch(api.getFileContent(id, rootDir))
       const text = await res.text()
       await navigator.clipboard.writeText(text)
       showToast('Code copied to clipboard')
@@ -28,15 +28,15 @@ export default function VersionTimeline({ versions, showToast }) {
           </span>
           {v.current && <span className="current-badge">current</span>}
           <button
-            className="detail-action-btn"
-            style={{ padding: '2px 8px', fontSize: 11 }}
-            onClick={() => window.open(api.getFileContent(v.id), '_blank')}
+            className="detail-action-btn mini"
+            aria-label={`Open ${v.filename} in browser`}
+            onClick={() => window.open(api.getFileContent(v.id, rootDir), '_blank')}
           >
             Open
           </button>
           <button
-            className="detail-action-btn"
-            style={{ padding: '2px 8px', fontSize: 11 }}
+            className="detail-action-btn mini"
+            aria-label={`Copy code from ${v.filename}`}
             onClick={() => copyCode(v.id)}
           >
             Copy

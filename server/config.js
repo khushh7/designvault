@@ -15,6 +15,10 @@ const DEFAULTS = {
   projectList: [],
 };
 
+function favoriteKey(rootDir, fileId) {
+  return `${path.resolve(rootDir)}::${fileId}`;
+}
+
 function configPath(rootDir) {
   return path.join(rootDir, CONFIG_FILE);
 }
@@ -46,9 +50,9 @@ async function updateConfig(rootDir, partial) {
 async function loadGlobalConfig() {
   try {
     const raw = await fs.promises.readFile(GLOBAL_CONFIG_FILE, 'utf-8');
-    return { projects: [], lastDir: null, ...JSON.parse(raw) };
+    return { projects: [], lastDir: null, favorites: [], ...JSON.parse(raw) };
   } catch {
-    return { projects: [], lastDir: null };
+    return { projects: [], lastDir: null, favorites: [] };
   }
 }
 
@@ -94,4 +98,4 @@ async function removeProject(directory) {
   return global;
 }
 
-module.exports = { loadConfig, saveConfig, updateConfig, loadGlobalConfig, saveGlobalConfig, registerProject, removeProject };
+module.exports = { loadConfig, saveConfig, updateConfig, loadGlobalConfig, saveGlobalConfig, registerProject, removeProject, favoriteKey };

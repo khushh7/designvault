@@ -1,5 +1,11 @@
 const BASE = '';
 
+function withRoot(url, rootDir) {
+  if (!rootDir) return `${BASE}${url}`;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${BASE}${url}${sep}rootDir=${encodeURIComponent(rootDir)}`;
+}
+
 async function jsonOrError(r) {
   const data = await r.json();
   if (!r.ok) throw new Error(data.error || `Request failed (${r.status})`);
@@ -8,51 +14,64 @@ async function jsonOrError(r) {
 
 export const api = {
   getFiles: () => fetch(`${BASE}/api/files`).then((r) => r.json()),
-  getFileContent: (id) => `${BASE}/api/files/${id}/content`,
-  renameFile: (id, newName) =>
+  getFavorites: () => fetch(`${BASE}/api/favorites`).then((r) => r.json()),
+  getFileContent: (id, rootDir) => withRoot(`/api/files/${id}/content`, rootDir),
+  renameFile: (id, newName, rootDir) =>
     fetch(`${BASE}/api/files/${id}/rename`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ newName }),
+      body: JSON.stringify({ newName, rootDir }),
     }).then((r) => r.json()),
-  moveFile: (id, destination) =>
+  moveFile: (id, destination, rootDir) =>
     fetch(`${BASE}/api/files/${id}/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ destination }),
+      body: JSON.stringify({ destination, rootDir }),
     }).then((r) => r.json()),
-  duplicateFile: (id) =>
-    fetch(`${BASE}/api/files/${id}/duplicate`, { method: 'POST' }).then((r) => r.json()),
-  deleteFile: (id) =>
-    fetch(`${BASE}/api/files/${id}`, { method: 'DELETE' }).then((r) => r.json()),
-  restoreFile: (id) =>
-    fetch(`${BASE}/api/files/${id}/restore`, { method: 'POST' }).then((r) => r.json()),
+  duplicateFile: (id, rootDir) =>
+    fetch(`${BASE}/api/files/${id}/duplicate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootDir }),
+    }).then((r) => r.json()),
+  deleteFile: (id, rootDir) =>
+    fetch(withRoot(`/api/files/${id}`, rootDir), { method: 'DELETE' }).then((r) => r.json()),
+  restoreFile: (id, rootDir) =>
+    fetch(`${BASE}/api/files/${id}/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootDir }),
+    }).then((r) => r.json()),
   rescan: () => fetch(`${BASE}/api/rescan`, { method: 'POST' }).then((r) => r.json()),
-  toggleFavorite: (id) =>
-    fetch(`${BASE}/api/config/favorite/${id}`, { method: 'PUT' }).then((r) => r.json()),
-  setTags: (id, tags) =>
+  toggleFavorite: (id, rootDir) =>
+    fetch(`${BASE}/api/config/favorite/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootDir }),
+    }).then((r) => r.json()),
+  setTags: (id, tags, rootDir) =>
     fetch(`${BASE}/api/config/tags/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tags }),
+      body: JSON.stringify({ tags, rootDir }),
     }).then((r) => r.json()),
-  setNote: (id, note) =>
+  setNote: (id, note, rootDir) =>
     fetch(`${BASE}/api/config/notes/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note }),
+      body: JSON.stringify({ note, rootDir }),
     }).then((r) => r.json()),
-  setStatus: (id, status) =>
+  setStatus: (id, status, rootDir) =>
     fetch(`${BASE}/api/config/status/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, rootDir }),
     }).then((r) => r.json()),
-  setProject: (id, project) =>
+  setProject: (id, project, rootDir) =>
     fetch(`${BASE}/api/config/project/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project }),
+      body: JSON.stringify({ project, rootDir }),
     }).then((r) => r.json()),
   getConfig: () => fetch(`${BASE}/api/config`).then((r) => r.json()),
   updateConfig: (data) =>

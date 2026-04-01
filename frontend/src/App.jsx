@@ -11,6 +11,8 @@ import Toast from './components/Toast'
 
 export default function App() {
   const [files, setFiles] = useState([])
+  const [favoriteFiles, setFavoriteFiles] = useState([])
+  const [globalFavoriteCount, setGlobalFavoriteCount] = useState(0)
   const [stats, setStats] = useState(null)
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -29,16 +31,25 @@ export default function App() {
     setFiles(data.files || [])
     setStats(data.stats || null)
     setConfig(data.config || null)
+    if (typeof data.globalFavoritesCount === 'number') setGlobalFavoriteCount(data.globalFavoritesCount)
     if (data.rootDir) setRootDir(data.rootDir)
     if (data.projects) setGlobalProjects(data.projects)
   }, [])
 
+  const loadFavorites = useCallback(async () => {
+    const data = await api.getFavorites()
+    setFavoriteFiles(data.files || [])
+    setGlobalFavoriteCount(typeof data.count === 'number' ? data.count : (data.files || []).length)
+  }, [])
+
   const loadData = useCallback(async () => {
     try {
-      const [data, info] = await Promise.all([api.getFiles(), api.getInfo()])
+      const [data, info, favorites] = await Promise.all([api.getFiles(), api.getInfo(), api.getFavorites()])
       applyData(data)
       if (info.rootDir) setRootDir(info.rootDir)
       if (info.projects) setGlobalProjects(info.projects)
+      setFavoriteFiles(favorites.files || [])
+      setGlobalFavoriteCount(typeof favorites.count === 'number' ? favorites.count : (favorites.files || []).length)
     } catch (e) {
       console.error('Failed to load data', e)
     } finally {
@@ -50,20 +61,32 @@ export default function App() {
     loadData()
     const cleanup = listenForUpdates((data) => {
       applyData(data)
+      loadFavorites().catch(() => {})
     })
     return cleanup
-  }, [loadData, applyData])
+  }, [loadData, applyData, loadFavorites])
 
   const showToast = useCallback((message, undoFn) => {
     setToast({ message, undoFn })
     setTimeout(() => setToast(null), 5000)
   }, [])
 
-  const handleToggleFavorite = async (id) => {
-    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, favorite: !f.favorite } : f)))
-    setSelectedFile((prev) => (prev?.id === id ? { ...prev, favorite: !prev.favorite } : prev))
-    const cfg = await api.toggleFavorite(id)
-    setConfig(cfg)
+  const handleToggleFavorite = async (file) => {
+    const targetRoot = file.sourceRootDir || rootDir
+    const nextFavorite = !file.favorite
+
+    setFiles((prev) => prev.map((f) => (f.id === file.id && (f.sourceRootDir || rootDir) === targetRoot ? { ...f, favorite: nextFavorite } : f)))
+    setFavoriteFiles((prev) => {
+      const existing = prev.some((f) => f.id === file.id && f.sourceRootDir === targetRoot)
+      if (nextFavorite) {
+        return existing ? prev : [{ ...file, favorite: true, sourceRootDir: targetRoot }, ...prev]
+      }
+      return prev.filter((f) => !(f.id === file.id && f.sourceRootDir === targetRoot))
+    })
+    setGlobalFavoriteCount((prev) => Math.max(0, prev + (nextFavorite ? 1 : -1)))
+    setSelectedFile((prev) => (prev?.id === file.id && (prev.sourceRootDir || rootDir) === targetRoot ? { ...prev, favorite: nextFavorite } : prev))
+    await api.toggleFavorite(file.id, targetRoot)
+    await loadFavorites()
   }
 
   const handleDelete = (file) => {
@@ -74,15 +97,22 @@ export default function App() {
   const handleConfirmDelete = async () => {
     if (!modalFile) return
     const fileId = modalFile.id
-    const data = await api.deleteFile(fileId)
-    setFiles(data.files || [])
-    setStats(data.stats || null)
+    const targetRoot = modalFile.sourceRootDir || rootDir
+    const data = await api.deleteFile(fileId, targetRoot)
+    if (data.files) {
+      setFiles(data.files || [])
+      setStats(data.stats || null)
+    }
     setActiveModal(null)
     if (selectedFile?.id === fileId) setSelectedFile(null)
+    await loadFavorites()
     showToast(`Deleted ${modalFile.filename}`, async () => {
-      const restored = await api.restoreFile(fileId)
-      setFiles(restored.files || [])
-      setStats(restored.stats || null)
+      const restored = await api.restoreFile(fileId, targetRoot)
+      if (restored.files) {
+        setFiles(restored.files || [])
+        setStats(restored.stats || null)
+      }
+      await loadFavorites()
     })
   }
 
@@ -92,20 +122,26 @@ export default function App() {
   }
 
   const handleDuplicate = async (file) => {
-    const data = await api.duplicateFile(file.id)
-    setFiles(data.files || [])
-    setStats(data.stats || null)
+    const data = await api.duplicateFile(file.id, file.sourceRootDir || rootDir)
+    if (data.files) {
+      setFiles(data.files || [])
+      setStats(data.stats || null)
+    }
+    await loadFavorites()
     showToast(`Duplicated ${file.filename}`)
   }
 
   const handleRename = async (file, newName) => {
-    const data = await api.renameFile(file.id, newName)
-    setFiles(data.files || [])
-    setStats(data.stats || null)
-    if (selectedFile?.id === file.id) {
+    const data = await api.renameFile(file.id, newName, file.sourceRootDir || rootDir)
+    if (data.files) {
+      setFiles(data.files || [])
+      setStats(data.stats || null)
+    }
+    if (selectedFile?.id === file.id && data.files) {
       const updated = data.files.find((f) => f.name === newName)
       if (updated) setSelectedFile(updated)
     }
+    await loadFavorites()
   }
 
   const updateFileAndSelection = (id, patch) => {
@@ -113,24 +149,34 @@ export default function App() {
     setSelectedFile((prev) => (prev?.id === id ? { ...prev, ...patch } : prev))
   }
 
+  const targetRootForId = (id) => {
+    if (selectedFile?.id === id && selectedFile?.sourceRootDir) return selectedFile.sourceRootDir
+    if (modalFile?.id === id && modalFile?.sourceRootDir) return modalFile.sourceRootDir
+    return rootDir
+  }
+
   const handleSetStatus = async (id, status) => {
     updateFileAndSelection(id, { status })
-    await api.setStatus(id, status)
+    await api.setStatus(id, status, targetRootForId(id))
+    await loadFavorites()
   }
 
   const handleSetTags = async (id, tags) => {
     updateFileAndSelection(id, { tags })
-    await api.setTags(id, tags)
+    await api.setTags(id, tags, targetRootForId(id))
+    await loadFavorites()
   }
 
   const handleSetNote = async (id, note) => {
     updateFileAndSelection(id, { note })
-    await api.setNote(id, note)
+    await api.setNote(id, note, targetRootForId(id))
+    await loadFavorites()
   }
 
   const handleSetProject = async (id, project) => {
     updateFileAndSelection(id, { project })
-    await api.setProject(id, project)
+    await api.setProject(id, project, targetRootForId(id))
+    await loadFavorites()
   }
 
   const handleRescan = async () => {
@@ -139,6 +185,7 @@ export default function App() {
     setFiles(data.files || [])
     setStats(data.stats || null)
     setConfig(data.config || null)
+    await loadFavorites()
     const newCount = (data.files || []).length
     const diff = newCount - prevCount
     const itemLabel = data.stats.mode === 'routes' ? 'pages' : 'files'
@@ -153,6 +200,7 @@ export default function App() {
     try {
       const data = await api.changeDir(newDir)
       applyData(data)
+      await loadFavorites()
       setSelectedFile(null)
       setActiveFilter({ type: 'designs' })
       setSearchQuery('')
@@ -173,11 +221,14 @@ export default function App() {
   const handleRemoveProject = async (directory) => {
     const data = await api.removeProject(directory)
     setGlobalProjects(data.projects || [])
+    await loadFavorites()
     showToast('Project removed')
   }
 
   // Filtering
-  const filteredFiles = files.filter((f) => {
+  const sourceFiles = activeFilter.type === 'favorites' ? favoriteFiles : files
+
+  const filteredFiles = sourceFiles.filter((f) => {
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
       const matchesName = f.name.toLowerCase().includes(q)
@@ -190,7 +241,7 @@ export default function App() {
     if (type === 'all') return true
     if (type === 'designs') return f.previewable
     if (type === 'code') return !f.previewable
-    if (type === 'favorites') return f.favorite
+    if (type === 'favorites') return true
     if (type === 'recent') return true // handled by sort below
     if (type === 'extension') return f.extension === value
     if (type === 'project') return f.project === value
@@ -208,6 +259,7 @@ export default function App() {
     <div className="app-layout">
       <Sidebar
         files={files}
+        globalFavoriteCount={globalFavoriteCount}
         config={config}
         activeFilter={activeFilter}
         onFilter={setActiveFilter}
@@ -233,13 +285,15 @@ export default function App() {
         />
 
         <div className="main-scroll">
-          <CardGrid
-            files={displayFiles}
-            loading={loading}
-            onSelect={setSelectedFile}
-            onContextMenu={setContextMenu}
-            onToggleFavorite={handleToggleFavorite}
-          />
+          <div className="content-shell">
+            <CardGrid
+              files={displayFiles}
+              loading={loading}
+              onSelect={setSelectedFile}
+              onContextMenu={setContextMenu}
+              onToggleFavorite={handleToggleFavorite}
+            />
+          </div>
         </div>
       </div>
 
