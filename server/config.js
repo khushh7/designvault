@@ -67,15 +67,15 @@ async function saveGlobalConfig(data) {
 
 const PROJECT_COLORS = ['#e67e22', '#27ae60', '#2563eb', '#8b5cf6', '#ec4899', '#14b8a6', '#0891b2', '#dc2626'];
 
-async function registerProject(rootDir) {
-  const folderName = path.basename(rootDir);
+async function registerProject(rootDir, customName) {
+  const folderName = customName || path.basename(rootDir);
   if (!folderName) return;
 
   const global = await loadGlobalConfig();
   const existing = global.projects.find((p) => p.directory === rootDir);
   if (existing) {
-    // Update lastScanned timestamp
     existing.lastScanned = new Date().toISOString();
+    if (customName) existing.name = customName;
     await saveGlobalConfig({ projects: global.projects });
     return;
   }
@@ -91,6 +91,15 @@ async function registerProject(rootDir) {
   await saveGlobalConfig({ projects: global.projects });
 }
 
+async function renameProject(directory, newName) {
+  const global = await loadGlobalConfig();
+  const project = global.projects.find((p) => p.directory === directory);
+  if (!project) return global;
+  project.name = newName;
+  await saveGlobalConfig({ projects: global.projects });
+  return global;
+}
+
 async function removeProject(directory) {
   const global = await loadGlobalConfig();
   global.projects = global.projects.filter((p) => p.directory !== directory);
@@ -98,4 +107,4 @@ async function removeProject(directory) {
   return global;
 }
 
-module.exports = { loadConfig, saveConfig, updateConfig, loadGlobalConfig, saveGlobalConfig, registerProject, removeProject, favoriteKey };
+module.exports = { loadConfig, saveConfig, updateConfig, loadGlobalConfig, saveGlobalConfig, registerProject, removeProject, renameProject, favoriteKey };

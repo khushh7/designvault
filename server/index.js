@@ -6,7 +6,7 @@ const net = require('net');
 const chokidar = require('chokidar');
 const { scanDirectory } = require('./scanner');
 const { pickDirectory } = require('./directoryPicker');
-const { loadConfig, saveConfig, updateConfig, loadGlobalConfig, saveGlobalConfig, registerProject, removeProject, favoriteKey } = require('./config');
+const { loadConfig, saveConfig, updateConfig, loadGlobalConfig, saveGlobalConfig, registerProject, removeProject, renameProject, favoriteKey } = require('./config');
 const { renameFile, moveFile, duplicateFile, deleteFile, restoreFile } = require('./fileOps');
 
 // SSE clients
@@ -61,12 +61,17 @@ function mergeConfigIntoFiles(files, config, globalFavorites = [], sourceRootDir
   }));
 }
 
+const EMPTY_SCAN = { files: [], stats: { totalFiles: 0, previewableFiles: 0, scannedFiles: 0, versionStacks: 0, byExtension: {}, mode: 'files' } };
+const EMPTY_CONFIG = { favorites: [], tags: {}, notes: {}, projects: {}, statuses: {} };
+
 async function startServer(initialRootDir) {
-  let rootDir = initialRootDir;
-  let scanData = await scanDirectory(rootDir);
-  let config = await loadConfig(rootDir);
-  await registerProject(rootDir);
-  await saveGlobalConfig({ lastDir: rootDir });
+  let rootDir = initialRootDir || null;
+  let scanData = rootDir ? await scanDirectory(rootDir) : EMPTY_SCAN;
+  let config = rootDir ? await loadConfig(rootDir) : EMPTY_CONFIG;
+  if (rootDir) {
+    await registerProject(rootDir);
+    await saveGlobalConfig({ lastDir: rootDir });
+  }
   let watcher = null;
 
   const app = express();
@@ -81,6 +86,7 @@ async function startServer(initialRootDir) {
 
   // Helpers
   async function rescan() {
+    if (!rootDir) return EMPTY_SCAN;
     scanData = await scanDirectory(rootDir);
     config = await loadConfig(rootDir);
     return scanData;
@@ -89,10 +95,10 @@ async function startServer(initialRootDir) {
   async function filesResponse() {
     const global = await loadGlobalConfig();
     return {
-      files: mergeConfigIntoFiles(scanData.files, config, global.favorites || [], rootDir, ''),
+      files: rootDir ? mergeConfigIntoFiles(scanData.files, config, global.favorites || [], rootDir, '') : [],
       stats: scanData.stats,
       config,
-      rootDir,
+      rootDir: rootDir || '',
       projects: global.projects || [],
       globalFavoritesCount: (global.favorites || []).length,
     };
@@ -100,7 +106,7 @@ async function startServer(initialRootDir) {
 
   async function favoritesResponse() {
     const global = await loadGlobalConfig();
-    const projectDirs = [...new Set([...(global.projects || []).map((p) => p.directory), rootDir].filter(Boolean))];
+    const projectDirs = [...new Set([...(global.projects || []).map((p) => p.directory), ...(rootDir ? [rootDir] : [])].filter(Boolean))];
     const favorites = [];
 
     for (const dir of projectDirs) {
@@ -139,6 +145,7 @@ async function startServer(initialRootDir) {
 
   // Validate that a resolved path is inside rootDir
   function assertInsideRoot(absPath) {
+    if (!rootDir) throw new Error('No project directory set');
     const resolved = path.resolve(absPath);
     const root = path.resolve(rootDir);
     if (!resolved.startsWith(root + path.sep) && resolved !== root) {
@@ -149,6 +156,7 @@ async function startServer(initialRootDir) {
   // Setup file watcher for a directory
   function setupWatcher(dir) {
     if (watcher) watcher.close();
+    if (!dir) return;
     let debounceTimer;
     watcher = chokidar.watch(dir, {
       ignored: [/(^|[/\\])node_modules/, /(^|[/\\])\.git/, /(^|[/\\])\.designvault/],
@@ -178,6 +186,7 @@ async function startServer(initialRootDir) {
   // Change the scanned directory at runtime
   app.post('/api/changedir', async (req, res) => {
     const rawDir = (req.body.directory || '').replace(/^['"""'']+|['"""'']+$/g, '').trim();
+    const customName = (req.body.name || '').trim() || null;
     if (!rawDir) return res.status(400).json({ error: 'directory is required' });
 
     const resolved = path.resolve(rawDir);
@@ -191,11 +200,10 @@ async function startServer(initialRootDir) {
     }
 
     try {
-      // Switch everything to the new directory
       rootDir = resolved;
       await rescan();
       setupWatcher(rootDir);
-      await registerProject(rootDir);
+      await registerProject(rootDir, customName);
       await saveGlobalConfig({ lastDir: rootDir });
       console.log(`  ◇ Switched to: ${rootDir}`);
       res.json(await filesResponse());
@@ -448,6 +456,13 @@ async function startServer(initialRootDir) {
     res.json({ projects: global.projects || [] });
   });
 
+  app.put('/api/projects/rename', async (req, res) => {
+    const { directory, name } = req.body;
+    if (!directory || !name) return res.status(400).json({ error: 'directory and name are required' });
+    const global = await renameProject(directory, name.trim());
+    res.json({ projects: global.projects || [] });
+  });
+
   app.get('/api/config', (_req, res) => {
     res.json(config);
   });
@@ -550,7 +565,7 @@ async function startServer(initialRootDir) {
   const port = await findPort(4567);
   const server = app.listen(port);
 
-  return { port, server, scanResult: scanData };
+  return { port, server, scanResult: rootDir ? scanData : null };
 }
 
 module.exports = { startServer };

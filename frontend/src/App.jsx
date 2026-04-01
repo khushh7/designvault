@@ -7,6 +7,7 @@ import DetailPanel from './components/DetailPanel'
 import ContextMenu from './components/ContextMenu'
 import DeleteModal from './components/DeleteModal'
 import MoveModal from './components/MoveModal'
+import PromptModal from './components/PromptModal'
 import Toast from './components/Toast'
 
 export default function App() {
@@ -26,6 +27,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [rootDir, setRootDir] = useState('')
   const [globalProjects, setGlobalProjects] = useState([])
+  const [pendingDir, setPendingDir] = useState(null)
 
   const applyData = useCallback((data) => {
     setFiles(data.files || [])
@@ -195,22 +197,38 @@ export default function App() {
     showToast(msg)
   }
 
-  const handleChangeDir = async (newDir) => {
+  const handleChangeDir = async (newDir, customName) => {
+    const isKnown = globalProjects.some((p) => p.directory === newDir)
+
+    if (!isKnown && !customName) {
+      setPendingDir(newDir)
+      return
+    }
+
+    await switchToDir(newDir, customName)
+  }
+
+  const switchToDir = async (dir, name) => {
+    const folderName = name || dir.split('/').filter(Boolean).pop() || dir
     setLoading(true)
     try {
-      const data = await api.changeDir(newDir)
+      const data = await api.changeDir(dir, name)
       applyData(data)
       await loadFavorites()
       setSelectedFile(null)
       setActiveFilter({ type: 'designs' })
       setSearchQuery('')
-      const folderName = (data.rootDir || newDir).split('/').filter(Boolean).pop()
       showToast(`Switched to ${folderName}`)
     } catch (e) {
       showToast(e.message || 'Failed to change directory')
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleRenameProject = async (directory, newName) => {
+    const data = await api.renameProject(directory, newName)
+    setGlobalProjects(data.projects || [])
   }
 
   const handleSwitchProject = async (directory) => {
@@ -271,6 +289,8 @@ export default function App() {
         rootDir={rootDir}
         onSwitchProject={handleSwitchProject}
         onRemoveProject={handleRemoveProject}
+        onAddProject={handleChangeDir}
+        onRenameProject={handleRenameProject}
       />
 
       <div className="main-content">
@@ -292,6 +312,7 @@ export default function App() {
               onSelect={setSelectedFile}
               onContextMenu={setContextMenu}
               onToggleFavorite={handleToggleFavorite}
+              onChangeDir={handleChangeDir}
             />
           </div>
         </div>
@@ -349,6 +370,20 @@ export default function App() {
         />
       )}
 
+      {pendingDir && (
+        <PromptModal
+          title="Name this project"
+          label={pendingDir}
+          defaultValue={pendingDir.split('/').filter(Boolean).pop() || ''}
+          onConfirm={(name) => {
+            const dir = pendingDir
+            setPendingDir(null)
+            switchToDir(dir, name)
+          }}
+          onCancel={() => setPendingDir(null)}
+        />
+      )}
+
       {toast && (
         <Toast
           message={toast.message}
@@ -356,6 +391,7 @@ export default function App() {
           onDismiss={() => setToast(null)}
         />
       )}
+
     </div>
   )
 }

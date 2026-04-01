@@ -103,12 +103,18 @@ export const api = {
     fetch(`${BASE}/api/pick-directory`, {
       method: 'POST',
     }).then(jsonOrError),
-  changeDir: (directory) =>
+  changeDir: (directory, name) =>
     fetch(`${BASE}/api/changedir`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ directory }),
+      body: JSON.stringify({ directory, name }),
     }).then(jsonOrError),
+  renameProject: (directory, name) =>
+    fetch(`${BASE}/api/projects/rename`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directory, name }),
+    }).then((r) => r.json()),
   removeProject: (directory) =>
     fetch(`${BASE}/api/projects`, {
       method: 'DELETE',

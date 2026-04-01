@@ -4,6 +4,7 @@ import { api } from '../api'
 export default function FilterBar({ searchQuery, onSearch, stats, onHamburger, onRescan, rootDir, onChangeDir }) {
   const [scanning, setScanning] = useState(false)
   const [pickingFolder, setPickingFolder] = useState(false)
+  const [pathInput, setPathInput] = useState('')
   const itemLabel = stats?.mode === 'routes' ? 'pages' : 'files'
 
   const handleRescan = async () => {
@@ -22,11 +23,18 @@ export default function FilterBar({ searchQuery, onSearch, stats, onHamburger, o
       if (result.cancelled || !result.directory || result.directory === rootDir) {
         return
       }
-
       await onChangeDir(result.directory)
     } finally {
       setPickingFolder(false)
     }
+  }
+
+  const handlePathSubmit = async (e) => {
+    e.preventDefault()
+    const trimmed = pathInput.trim().replace(/^['"""'']+|['"""'']+$/g, '')
+    if (!trimmed) return
+    await onChangeDir(trimmed)
+    setPathInput('')
   }
 
   return (
@@ -34,9 +42,19 @@ export default function FilterBar({ searchQuery, onSearch, stats, onHamburger, o
       <div className="dir-bar">
         <div className="dir-bar-inner">
           <span className="dir-bar-label">Current library</span>
-          <div className="dir-bar-path" title={rootDir}>
-            {rootDir || 'No folder selected'}
-          </div>
+          <form className="dir-bar-form" onSubmit={handlePathSubmit}>
+            <input
+              className="dir-bar-input"
+              type="text"
+              placeholder={rootDir || 'Paste a folder path...'}
+              value={pathInput}
+              onChange={(e) => setPathInput(e.target.value)}
+              title={rootDir || 'Paste a folder path'}
+            />
+            {pathInput.trim() && (
+              <button type="submit" className="dir-go-btn">Scan</button>
+            )}
+          </form>
           <button
             className="dir-select-btn"
             onClick={handlePickFolder}
@@ -44,12 +62,12 @@ export default function FilterBar({ searchQuery, onSearch, stats, onHamburger, o
             aria-label="Choose a folder from your computer"
             title="Choose a folder from your computer"
           >
-            {pickingFolder ? 'Opening picker...' : 'Choose folder'}
+            {pickingFolder ? 'Opening...' : 'Select folder'}
           </button>
           <button
             className="rescan-btn"
             onClick={handleRescan}
-            disabled={scanning || pickingFolder}
+            disabled={scanning || pickingFolder || !rootDir}
             aria-label="Rescan current folder"
             title="Rescan directory for changes"
           >
