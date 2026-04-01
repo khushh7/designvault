@@ -272,6 +272,91 @@ async function startServer(initialRootDir) {
     }
   });
 
+  // Reveal file in Finder (macOS) or file manager
+  app.post('/api/files/:id/reveal', async (req, res) => {
+    try {
+      const targetRoot = getRequestedRoot(req);
+      const targetScanData = await getScanDataFor(targetRoot);
+      const file = findFileByIdInScan(targetScanData, req.params.id);
+      if (!file) return res.status(404).json({ error: 'File not found' });
+
+      const { execFile: ef } = require('child_process');
+      if (process.platform === 'darwin') {
+        ef('open', ['-R', file.absolutePath]);
+      } else if (process.platform === 'win32') {
+        ef('explorer', ['/select,', file.absolutePath]);
+      } else {
+        ef('xdg-open', [path.dirname(file.absolutePath)]);
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Open file's directory in a new terminal tab
+  app.post('/api/files/:id/terminal', async (req, res) => {
+    try {
+      const targetRoot = getRequestedRoot(req);
+      const targetScanData = await getScanDataFor(targetRoot);
+      const file = findFileByIdInScan(targetScanData, req.params.id);
+      if (!file) return res.status(404).json({ error: 'File not found' });
+
+      const dir = path.dirname(file.absolutePath);
+      const { execFile: ef } = require('child_process');
+      if (process.platform === 'darwin') {
+        ef('osascript', ['-e', `tell application "Terminal" to do script "cd '${dir.replace(/'/g, "'\\''")}'"`]);
+      } else if (process.platform === 'win32') {
+        ef('cmd.exe', ['/c', 'start', 'cmd', '/k', `cd /d "${dir}"`]);
+      } else {
+        ef('x-terminal-emulator', ['-e', `cd "${dir}" && $SHELL`]);
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Open file's directory in a code editor / AI tool
+  app.post('/api/files/:id/open-in', async (req, res) => {
+    try {
+      const targetRoot = getRequestedRoot(req);
+      const targetScanData = await getScanDataFor(targetRoot);
+      const file = findFileByIdInScan(targetScanData, req.params.id);
+      if (!file) return res.status(404).json({ error: 'File not found' });
+
+      const tool = req.body.tool;
+      const dir = path.dirname(file.absolutePath);
+      const { execFile: ef } = require('child_process');
+      const escapedDir = dir.replace(/'/g, "'\\''");
+
+      function openInTerminalWith(cliCmd) {
+        if (process.platform === 'darwin') {
+          ef('osascript', ['-e',
+            `tell application "Terminal"\n  activate\n  do script "cd '${escapedDir}' && ${cliCmd}"\nend tell`
+          ]);
+        } else if (process.platform === 'win32') {
+          ef('cmd.exe', ['/c', 'start', 'cmd', '/k', `cd /d "${dir}" && ${cliCmd}`]);
+        } else {
+          ef('x-terminal-emulator', ['-e', `cd "${dir}" && ${cliCmd}`]);
+        }
+      }
+
+      const commands = {
+        'claude-code': () => openInTerminalWith('claude'),
+        'codex': () => openInTerminalWith('codex'),
+        'cursor': () => ef('cursor', [dir]),
+      };
+
+      const launcher = commands[tool];
+      if (!launcher) return res.status(400).json({ error: `Unknown tool: ${tool}` });
+      launcher();
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/files/:id/rename', async (req, res) => {
     try {
       const targetRoot = getRequestedRoot(req);

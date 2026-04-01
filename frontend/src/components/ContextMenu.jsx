@@ -120,11 +120,21 @@ export default function ContextMenu({ x, y, file, onClose, onSelect, onDelete, o
         Copy code
       </button>
       <div className="context-separator" />
-      <button className="context-item" role="menuitem" onClick={() => { showToast(`Run: open "${file.relativePath}" in terminal`); onClose() }}>
+      <button className="context-item" role="menuitem" onClick={async () => { await api.revealInFinder(file.id, file.sourceRootDir); onClose() }}>
         Reveal in Finder
       </button>
-      <button className="context-item" role="menuitem" onClick={() => { showToast(`Run: cd "${file.relativePath.replace(/\/[^/]+$/, '')}" in terminal`); onClose() }}>
+      <button className="context-item" role="menuitem" onClick={async () => { await api.openInTerminal(file.id, file.sourceRootDir); onClose() }}>
         Open in terminal
+      </button>
+      <div className="context-separator" />
+      <button className="context-item" role="menuitem" onClick={async () => { await api.openIn(file.id, 'claude-code', file.sourceRootDir); showToast('Opening in Claude Code'); onClose() }}>
+        Open in Claude Code
+      </button>
+      <button className="context-item" role="menuitem" onClick={async () => { await api.openIn(file.id, 'codex', file.sourceRootDir); showToast('Opening in Codex'); onClose() }}>
+        Open in Codex
+      </button>
+      <button className="context-item" role="menuitem" onClick={async () => { await api.openIn(file.id, 'cursor', file.sourceRootDir); showToast('Opening in Cursor'); onClose() }}>
+        Open in Cursor
       </button>
       <div className="context-separator" />
       <button className="context-item danger" role="menuitem" onClick={() => { onDelete(file); onClose() }}>

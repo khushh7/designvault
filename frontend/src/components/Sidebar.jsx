@@ -20,48 +20,6 @@ export default function Sidebar({
         <span>◇</span> DesignVault
       </div>
 
-      {/* Current project library */}
-      <div className="sidebar-section">
-        <div className="sidebar-section-title">Library</div>
-        <button
-          className={`sidebar-item ${isActive('designs') ? 'active' : ''}`}
-          aria-pressed={isActive('designs')}
-          onClick={() => { onFilter({ type: 'designs' }); onClose() }}
-        >
-          Designs <span className="count">{previewableFiles.length}</span>
-        </button>
-        <button
-          className={`sidebar-item ${isActive('all') ? 'active' : ''}`}
-          aria-pressed={isActive('all')}
-          onClick={() => { onFilter({ type: 'all' }); onClose() }}
-        >
-          All files <span className="count">{files.length}</span>
-        </button>
-        <button
-          className={`sidebar-item ${isActive('favorites') ? 'active' : ''}`}
-          aria-pressed={isActive('favorites')}
-          onClick={() => { onFilter({ type: 'favorites' }); onClose() }}
-        >
-          Favorites <span className="count">{favoriteCount}</span>
-        </button>
-        <button
-          className={`sidebar-item ${isActive('recent') ? 'active' : ''}`}
-          aria-pressed={isActive('recent')}
-          onClick={() => { onFilter({ type: 'recent' }); onClose() }}
-        >
-          Recent <span className="count">{Math.min(files.length, 10)}</span>
-        </button>
-        {codeOnlyFiles.length > 0 && (
-          <button
-            className={`sidebar-item ${isActive('code') ? 'active' : ''}`}
-            aria-pressed={isActive('code')}
-            onClick={() => { onFilter({ type: 'code' }); onClose() }}
-          >
-            Code only <span className="count">{codeOnlyFiles.length}</span>
-          </button>
-        )}
-      </div>
-
       {/* Global projects — all scanned directories */}
       <div className="sidebar-section">
         <div className="sidebar-section-title">Projects</div>
@@ -106,29 +64,15 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* File types for current project */}
+      {/* Library */}
       <div className="sidebar-section">
-        <div className="sidebar-section-title">File Types</div>
+        <div className="sidebar-section-title">Library</div>
         <button
-          className={`sidebar-item ${isActive('extension', 'html') ? 'active' : ''}`}
-          aria-pressed={isActive('extension', 'html')}
-          onClick={() => { onFilter({ type: 'extension', value: 'html' }); onClose() }}
+          className={`sidebar-item ${isActive('favorites') ? 'active' : ''}`}
+          aria-pressed={isActive('favorites')}
+          onClick={() => { onFilter({ type: 'favorites' }); onClose() }}
         >
-          HTML pages <span className="count">{htmlCount}</span>
-        </button>
-        <button
-          className={`sidebar-item ${isActive('extension', 'jsx') ? 'active' : ''}`}
-          aria-pressed={isActive('extension', 'jsx')}
-          onClick={() => { onFilter({ type: 'extension', value: 'jsx' }); onClose() }}
-        >
-          React components <span className="count">{jsxCount}</span>
-        </button>
-        <button
-          className={`sidebar-item ${isActive('extension', 'svg') ? 'active' : ''}`}
-          aria-pressed={isActive('extension', 'svg')}
-          onClick={() => { onFilter({ type: 'extension', value: 'svg' }); onClose() }}
-        >
-          SVG assets <span className="count">{svgCount}</span>
+          Favorites <span className="count">{favoriteCount}</span>
         </button>
       </div>
 

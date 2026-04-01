@@ -42,6 +42,24 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rootDir }),
     }).then((r) => r.json()),
+  openIn: (id, tool, rootDir) =>
+    fetch(`${BASE}/api/files/${id}/open-in`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tool, rootDir }),
+    }).then((r) => r.json()),
+  revealInFinder: (id, rootDir) =>
+    fetch(`${BASE}/api/files/${id}/reveal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootDir }),
+    }).then((r) => r.json()),
+  openInTerminal: (id, rootDir) =>
+    fetch(`${BASE}/api/files/${id}/terminal`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rootDir }),
+    }).then((r) => r.json()),
   rescan: () => fetch(`${BASE}/api/rescan`, { method: 'POST' }).then((r) => r.json()),
   toggleFavorite: (id, rootDir) =>
     fetch(`${BASE}/api/config/favorite/${id}`, {
