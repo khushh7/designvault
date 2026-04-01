@@ -9,6 +9,7 @@ import DeleteModal from './components/DeleteModal'
 import MoveModal from './components/MoveModal'
 import PromptModal from './components/PromptModal'
 import Toast from './components/Toast'
+import StarPopup from './components/StarPopup'
 
 export default function App() {
   const [files, setFiles] = useState([])
@@ -392,6 +393,7 @@ export default function App() {
         />
       )}
 
+      <StarPopup />
     </div>
   )
 }

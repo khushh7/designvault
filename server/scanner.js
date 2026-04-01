@@ -806,6 +806,45 @@ async function scanDirectory(rootDir) {
 
   const previewableCount = result.filter((f) => f.previewable).length;
 
+  // Check if the preview source is reachable
+  let devServerUp = false;
+  let devCommand = null;
+  let isLocal = false;
+  if (previewBaseUrl) {
+    try {
+      const urlObj = new URL(previewBaseUrl);
+      isLocal = urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1';
+    } catch {}
+
+    if (isLocal) {
+      // Local dev server — ping to check if it's running
+      try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 2000);
+        const res = await fetch(previewBaseUrl, { method: 'HEAD', signal: controller.signal });
+        clearTimeout(t);
+        devServerUp = res.ok || res.status < 500;
+      } catch {
+        devServerUp = false;
+      }
+    } else {
+      // Remote URL (vercel, netlify, etc.) — this is a fallback because
+      // no local dev server was detected. Show the offline nudge so the
+      // user knows to start their local server for proper previews.
+      const hasLocalFramework = await detectDevCommand(rootDir) !== null;
+      devServerUp = !hasLocalFramework;
+    }
+
+    devCommand = await detectDevCommand(rootDir);
+    for (const file of result) {
+      if (file.previewUrl) {
+        file.devServerUp = devServerUp;
+        file.devCommand = devCommand;
+        file.isLocalPreview = isLocal;
+      }
+    }
+  }
+
   return {
     files: result,
     stats: {
@@ -817,6 +856,17 @@ async function scanDirectory(rootDir) {
       mode: hasProjectRoutes ? 'routes' : 'files',
     },
   };
+}
+
+async function detectDevCommand(rootDir) {
+  try {
+    const pkg = JSON.parse(await fs.promises.readFile(path.join(rootDir, 'package.json'), 'utf8'));
+    const scripts = pkg.scripts || {};
+    if (scripts.dev) return 'npm run dev';
+    if (scripts.start) return 'npm start';
+    if (scripts.serve) return 'npm run serve';
+  } catch {}
+  return null;
 }
 
 module.exports = { scanDirectory, simpleHash };

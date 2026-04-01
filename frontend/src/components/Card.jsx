@@ -8,9 +8,11 @@ export default function Card({ file, onClick, onContextMenu, onToggleFavorite })
   const badgeLabel = file.kind === 'route' ? 'page' : file.extension
   const iframeTitle = file.previewUrl || title
   const [previewFailed, setPreviewFailed] = useState(false)
+  const [iframeLoaded, setIframeLoaded] = useState(false)
 
   useEffect(() => {
     setPreviewFailed(false)
+    setIframeLoaded(false)
   }, [file.id, file.previewUrl])
 
   const timeAgo = (dateStr) => {
@@ -63,22 +65,51 @@ export default function Card({ file, onClick, onContextMenu, onToggleFavorite })
         )}
         {file.extension === 'svg' ? (
           <img src={api.getFileContent(file.id, file.sourceRootDir)} alt={title} />
+        ) : file.previewUrl && file.devServerUp === false ? (
+          <div className="server-starting-fallback">
+            <svg className="server-starting-mark" viewBox="0 0 144 144" aria-hidden="true">
+              <rect className="cell-1" x="16" y="16" width="32" height="32" rx="4" fill="currentColor" />
+              <rect className="cell-2" x="56" y="16" width="32" height="32" rx="4" fill="currentColor" />
+              <rect className="cell-3" x="96" y="16" width="32" height="32" rx="4" fill="currentColor" />
+              <rect className="cell-4" x="16" y="56" width="32" height="32" rx="4" fill="currentColor" />
+              <rect className="cell-5" x="56" y="56" width="32" height="32" rx="4" fill="currentColor" />
+              <rect className="cell-6" x="96" y="56" width="32" height="32" rx="4" fill="currentColor" />
+              <rect className="cell-7" x="16" y="96" width="32" height="32" rx="4" fill="currentColor" />
+              <rect className="cell-8" x="56" y="96" width="32" height="32" rx="4" fill="currentColor" />
+              <rect className="cell-9" x="96" y="96" width="32" height="32" rx="4" fill="currentColor" />
+            </svg>
+            <span className="server-starting-text">Starting preview...</span>
+          </div>
         ) : file.previewUrl && !previewFailed ? (
-          <iframe
-            src={file.previewUrl}
-            title={iframeTitle}
-            loading="lazy"
-            onError={() => setPreviewFailed(true)}
-          />
+          <>
+            {!iframeLoaded && (
+              <div className="iframe-loading-placeholder">
+                <svg className="iframe-loading-mark" viewBox="0 0 144 144" aria-hidden="true">
+                  <rect className="cell-1" x="16" y="16" width="32" height="32" rx="4" fill="currentColor" />
+                  <rect className="cell-2" x="56" y="16" width="32" height="32" rx="4" fill="currentColor" />
+                  <rect className="cell-3" x="96" y="16" width="32" height="32" rx="4" fill="currentColor" />
+                  <rect className="cell-4" x="16" y="56" width="32" height="32" rx="4" fill="currentColor" />
+                  <rect className="cell-5" x="56" y="56" width="32" height="32" rx="4" fill="currentColor" />
+                  <rect className="cell-6" x="96" y="56" width="32" height="32" rx="4" fill="currentColor" />
+                  <rect className="cell-7" x="16" y="96" width="32" height="32" rx="4" fill="currentColor" />
+                  <rect className="cell-8" x="56" y="96" width="32" height="32" rx="4" fill="currentColor" />
+                  <rect className="cell-9" x="96" y="96" width="32" height="32" rx="4" fill="currentColor" />
+                </svg>
+              </div>
+            )}
+            <iframe
+              className={iframeLoaded ? 'iframe-loaded' : 'iframe-loading'}
+              src={file.previewUrl}
+              title={iframeTitle}
+              loading="lazy"
+              onLoad={() => setIframeLoaded(true)}
+              onError={() => setPreviewFailed(true)}
+            />
+          </>
         ) : isCode ? (
           <div className="code-placeholder">
             <span className="code-placeholder-icon">{'</>'}</span>
             <span className="code-placeholder-ext">{file.extension.toUpperCase()}</span>
-          </div>
-        ) : file.previewUrl && previewFailed ? (
-          <div className="preview-fallback">
-            <span className="preview-fallback-title">Preview unavailable</span>
-            <span className="preview-fallback-copy">Open the detail panel to launch the page directly.</span>
           </div>
         ) : (
           <iframe

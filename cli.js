@@ -39,8 +39,12 @@ async function main() {
   await open(`http://localhost:${port}`);
 }
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('\n  Shutting down...');
+  try {
+    const { stopDevServer } = require('./server/devServer');
+    await stopDevServer();
+  } catch {}
   process.exit(0);
 });
 

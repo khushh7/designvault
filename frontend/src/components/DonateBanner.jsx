@@ -1,11 +1,12 @@
 export default function DonateBanner() {
   return (
-    <div className="donate-banner">
-      Independent, calm, and built with care.
-      <br />
-      <a href="https://github.com/designvault" target="_blank" rel="noopener noreferrer">
-        Star on GitHub
-      </a>
-    </div>
+    <a
+      className="star-banner"
+      href="https://github.com/khushh7/designvault"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      <img className="star-banner-img" src="/star-banner.webp" alt="Star on GitHub" />
+    </a>
   )
 }

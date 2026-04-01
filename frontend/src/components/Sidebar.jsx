@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { api } from '../api'
-import DonateBanner from './DonateBanner'
 
 export default function Sidebar({
   files, globalFavoriteCount, config, activeFilter, onFilter, open, onClose,
@@ -140,8 +139,6 @@ export default function Sidebar({
         </button>
       </div>
 
-      <div style={{ flex: 1 }} />
-      <DonateBanner />
     </aside>
   )
 }

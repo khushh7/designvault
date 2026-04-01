@@ -8,6 +8,7 @@ const { scanDirectory } = require('./scanner');
 const { pickDirectory } = require('./directoryPicker');
 const { loadConfig, saveConfig, updateConfig, loadGlobalConfig, saveGlobalConfig, registerProject, removeProject, renameProject, favoriteKey } = require('./config');
 const { renameFile, moveFile, duplicateFile, deleteFile, restoreFile } = require('./fileOps');
+const { startDevServer, stopDevServer, getDevServerStatus } = require('./devServer');
 
 // SSE clients
 let sseClients = [];
@@ -73,6 +74,27 @@ async function startServer(initialRootDir) {
     await saveGlobalConfig({ lastDir: rootDir });
   }
   let watcher = null;
+
+  // Auto-start dev server if needed
+  async function maybeStartDevServer() {
+    if (!rootDir) return;
+    const needsDevServer = scanData.files.some((f) => f.previewUrl && f.devServerUp === false && f.devCommand);
+    if (!needsDevServer) return;
+    const devCommand = scanData.files.find((f) => f.devCommand)?.devCommand;
+    if (!devCommand) return;
+
+    console.log(`  ◇ Starting dev server (${devCommand})...`);
+    const result = await startDevServer(rootDir, devCommand, async (baseUrl) => {
+      // Dev server is ready — rescan to pick up the local preview URLs
+      console.log(`  ✓ Dev server ready at ${baseUrl}`);
+      scanData = await scanDirectory(rootDir);
+      config = await loadConfig(rootDir);
+      broadcast(await filesResponse());
+    });
+    if (!result) {
+      console.log('  ⚠ Dev server failed to start — previews may be limited');
+    }
+  }
 
   const app = express();
   app.use(cors());
@@ -200,6 +222,7 @@ async function startServer(initialRootDir) {
     }
 
     try {
+      await stopDevServer();
       rootDir = resolved;
       await rescan();
       setupWatcher(rootDir);
@@ -207,6 +230,8 @@ async function startServer(initialRootDir) {
       await saveGlobalConfig({ lastDir: rootDir });
       console.log(`  ◇ Switched to: ${rootDir}`);
       res.json(await filesResponse());
+      // Auto-start dev server for the new project (non-blocking)
+      maybeStartDevServer();
     } catch (err) {
       res.status(500).json({ error: `Scan failed: ${err.message}` });
     }
@@ -531,6 +556,11 @@ async function startServer(initialRootDir) {
     });
   });
 
+  // Dev server status endpoint
+  app.get('/api/devserver', (_req, res) => {
+    res.json(getDevServerStatus() || { running: false, starting: false });
+  });
+
   // SPA fallback — serve index.html for non-API routes
   app.get('*', (_req, res) => {
     const indexPath = path.join(distDir, 'index.html');
@@ -564,6 +594,9 @@ async function startServer(initialRootDir) {
   // Start listening
   const port = await findPort(4567);
   const server = app.listen(port);
+
+  // Auto-start dev server after server is up (non-blocking)
+  maybeStartDevServer();
 
   return { port, server, scanResult: rootDir ? scanData : null };
 }
