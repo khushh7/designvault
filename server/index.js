@@ -9,6 +9,7 @@ const { pickDirectory } = require('./directoryPicker');
 const { loadConfig, saveConfig, updateConfig, loadGlobalConfig, saveGlobalConfig, registerProject, removeProject, renameProject, favoriteKey } = require('./config');
 const { renameFile, moveFile, duplicateFile, deleteFile, restoreFile } = require('./fileOps');
 const { startDevServer, stopDevServer, getDevServerStatus } = require('./devServer');
+const { version: APP_VERSION } = require('../package.json');
 
 // SSE clients
 let sseClients = [];
@@ -202,7 +203,7 @@ async function startServer(initialRootDir) {
   // Server info — tells the frontend which directory is being scanned + all registered projects
   app.get('/api/info', async (_req, res) => {
     const global = await loadGlobalConfig();
-    res.json({ rootDir, version: '1.0.0', projects: global.projects || [] });
+    res.json({ rootDir, version: APP_VERSION, projects: global.projects || [] });
   });
 
   // Change the scanned directory at runtime

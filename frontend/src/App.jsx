@@ -10,8 +10,10 @@ import MoveModal from './components/MoveModal'
 import PromptModal from './components/PromptModal'
 import Toast from './components/Toast'
 import StarPopup from './components/StarPopup'
+import Onboarding, { useOnboarding } from './components/Onboarding'
 
 export default function App() {
+  const { showOnboarding, dismissOnboarding } = useOnboarding()
   const [files, setFiles] = useState([])
   const [favoriteFiles, setFavoriteFiles] = useState([])
   const [globalFavoriteCount, setGlobalFavoriteCount] = useState(0)
@@ -391,6 +393,10 @@ export default function App() {
           undoFn={toast.undoFn}
           onDismiss={() => setToast(null)}
         />
+      )}
+
+      {showOnboarding && (
+        <Onboarding onDismiss={dismissOnboarding} />
       )}
 
       <StarPopup />

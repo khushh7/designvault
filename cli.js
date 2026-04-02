@@ -4,8 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { startServer } = require('./server/index.js');
 const { loadGlobalConfig } = require('./server/config.js');
-
-const VERSION = '1.0.0';
+const { version: VERSION } = require('./package.json');
 
 async function main() {
   let targetDir = null;
