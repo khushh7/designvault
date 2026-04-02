@@ -1800,6 +1800,17 @@ textarea:focus-visible,
   background: rgba(0, 0, 0, 0.7);
 }
 
+/* Sidebar flowers */
+
+.sidebar-flowers {
+  display: block;
+  width: calc(100% + 28px);
+  height: auto;
+  opacity: 0.55;
+  pointer-events: none;
+  margin: 0 -14px -16px;
+}
+
 /* Loading state */
 
 .loading-state {
