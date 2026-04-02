@@ -14,6 +14,7 @@
   "scripts": {
     "build:frontend": "cd frontend && npm install && npm run build",
     "prepare": "npm run build:frontend",
+    "test": "node --test server/*.test.js",
     "dev:server": "node cli.js ./test-fixtures",
     "dev:frontend": "cd frontend && npm run dev"
   },

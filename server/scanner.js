@@ -7,7 +7,9 @@ const IGNORED_DIR_NAMES = new Set([
   'node_modules',
   'dist',
   'build',
+  'out',
   '.next',
+  '.output',
   '.designvault',
   'coverage',
   '.turbo',
@@ -45,7 +47,44 @@ const IGNORED_SVG_FILENAMES = new Set([
   'window.svg',
 ]);
 
-const PAGE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.html', '.htm']);
+const GENERAL_FILE_EXTENSIONS = new Set(['.html', '.htm', '.jsx', '.tsx', '.svg']);
+const ROUTE_FILE_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.html', '.htm', '.vue', '.svelte', '.astro', '.md', '.mdx']);
+const SVELTE_PAGE_EXTENSIONS = new Set(['.svelte', '.md', '.svx']);
+const SRC_ROUTES_EXTENSIONS = new Set(['.js', '.jsx', '.ts', '.tsx', '.md', '.mdx']);
+const CONFIG_SITE_FILE_CANDIDATES = [
+  'astro.config.mjs',
+  'astro.config.mts',
+  'astro.config.ts',
+  'astro.config.js',
+  'astro.config.cjs',
+  'nuxt.config.ts',
+  'nuxt.config.js',
+  'nuxt.config.mjs',
+  'nuxt.config.cjs',
+  'vitepress.config.ts',
+  'vitepress.config.js',
+  '.vitepress/config.ts',
+  '.vitepress/config.js',
+  'docusaurus.config.ts',
+  'docusaurus.config.js',
+  'docusaurus.config.mjs',
+  'docusaurus.config.cjs',
+  'vite.config.ts',
+  'vite.config.js',
+  'vite.config.mjs',
+  'vite.config.cjs',
+];
+const CONFIG_URL_KEY_REGEX = /\b(site|url|siteUrl|site_url|metadataBase|canonical)\s*:\s*(?:new URL\()?(["'`])([^"'`]+)\2/g;
+const SCRIPT_PORT_PATTERNS = [
+  /(?:^|\s)--port(?:=|\s+)(\d{2,5})(?=\s|$)/i,
+  /(?:^|\s)-p\s+(\d{2,5})(?=\s|$)/i,
+  /(?:^|\s)PORT=(\d{2,5})(?=\s|$)/i,
+];
+const SCRIPT_HOST_PATTERNS = [
+  /(?:^|\s)--host(?:=|\s+)([^\s]+)(?=\s|$)/i,
+  /(?:^|\s)-H\s+([^\s]+)(?=\s|$)/i,
+  /(?:^|\s)HOST=([^\s]+)(?=\s|$)/i,
+];
 const LOCAL_PREVIEW_PORT_PREFERENCE = [3000, 3001, 3002, 3003, 4173, 4321, 5173, 8080, 8787];
 const PREVIEW_BASE_URL_CACHE_TTL_MS = 5000;
 const previewBaseUrlCache = new Map();
@@ -108,6 +147,10 @@ function normalizeSegments(relativePath) {
   return relativePath.split(/[\\/]/).filter(Boolean);
 }
 
+function sanitizeRouteParamName(value) {
+  return (value || 'param').replace(/^\.{3}/, '').replace(/[^\w]+/g, '_').replace(/^_+|_+$/g, '') || 'param';
+}
+
 function isRouteGroupSegment(segment) {
   return /^\(.*\)$/.test(segment);
 }
@@ -116,8 +159,57 @@ function isNonRoutableSegment(segment) {
   return isRouteGroupSegment(segment) || segment.startsWith('@');
 }
 
-function normalizeRouteSegments(segments) {
-  return segments.filter((segment) => !isNonRoutableSegment(segment));
+function normalizeBracketRouteSegment(segment) {
+  const optionalCatchAllMatch = segment.match(/^\[\[\.\.\.(.+)\]\]$/);
+  if (optionalCatchAllMatch) return '*';
+
+  const catchAllMatch = segment.match(/^\[\.\.\.(.+)\]$/);
+  if (catchAllMatch) return '*';
+
+  const optionalParamMatch = segment.match(/^\[\[(.+)\]\]$/);
+  if (optionalParamMatch) return `:${sanitizeRouteParamName(optionalParamMatch[1])}?`;
+
+  const paramMatch = segment.match(/^\[(.+)\]$/);
+  if (paramMatch) return `:${sanitizeRouteParamName(paramMatch[1])}`;
+
+  return segment;
+}
+
+function normalizeRouteSegment(segment, options = {}) {
+  if (!segment) return null;
+  if (isNonRoutableSegment(segment)) return null;
+
+  if (options.framework === 'remix') {
+    if (segment === 'index' || segment === '_index') return '';
+    if (segment === '$') return '*';
+    if (segment.startsWith('$')) {
+      return `:${sanitizeRouteParamName(segment.slice(1))}`;
+    }
+    if (segment.startsWith('_')) return null;
+    if (segment.endsWith('_')) segment = segment.slice(0, -1);
+  }
+
+  return normalizeBracketRouteSegment(segment);
+}
+
+function normalizeRouteSegments(segments, options = {}) {
+  return segments
+    .map((segment) => normalizeRouteSegment(segment, options))
+    .filter((segment) => segment !== null && segment !== '');
+}
+
+function buildRoutePathFromSegments(segments, options = {}) {
+  const normalizedSegments = normalizeRouteSegments(segments, options);
+  return normalizedSegments.length === 0 ? '/' : `/${normalizedSegments.join('/')}`.replace(/\/+/g, '/');
+}
+
+function buildRoutePathFromFile(dirSegments, fileStem, options = {}) {
+  const segments = [...dirSegments];
+  const normalizedStem = normalizeRouteSegment(fileStem, options);
+  if (normalizedStem) {
+    segments.push(normalizedStem);
+  }
+  return buildRoutePathFromSegments(segments, options);
 }
 
 function joinRoutePaths(parentPath, childPath, isIndex = false) {
@@ -132,7 +224,7 @@ function joinRoutePaths(parentPath, childPath, isIndex = false) {
 function createPreviewRoutePath(routePath) {
   if (!routePath) return '/';
   return routePath
-    .replace(/:([A-Za-z0-9_]+)/g, 'preview')
+    .replace(/:([A-Za-z0-9_]+)\??/g, 'preview')
     .replace(/\*/g, 'preview')
     .replace(/\/+/g, '/');
 }
@@ -152,10 +244,9 @@ function getAppRouteMeta(relativePath) {
   const filename = segments[segments.length - 1];
   const ext = path.extname(filename).toLowerCase();
   const basename = path.basename(filename, ext).toLowerCase();
-  if (!PAGE_EXTENSIONS.has(ext) || basename !== 'page') return null;
+  if (!ROUTE_FILE_EXTENSIONS.has(ext) || basename !== 'page') return null;
 
-  const routeSegments = normalizeRouteSegments(segments.slice(appIndex + 1, -1));
-  const routePath = routeSegments.length === 0 ? '/' : `/${routeSegments.join('/')}`;
+  const routePath = buildRoutePathFromSegments(segments.slice(appIndex + 1, -1));
   return {
     ...buildRouteMeta(routePath),
     kind: 'route',
@@ -172,18 +263,16 @@ function getPagesRouteMeta(relativePath) {
 
   if (pagesIndex === -1) return null;
 
-  const routeSegments = normalizeRouteSegments(segments.slice(pagesIndex + 1));
-  if (routeSegments[0] === 'api' || routeSegments.length === 0) return null;
+  const rawFilename = segments[segments.length - 1];
+  const ext = path.extname(rawFilename).toLowerCase();
+  const basename = path.basename(rawFilename, ext).toLowerCase();
+  if (!ROUTE_FILE_EXTENSIONS.has(ext) || IGNORED_BASENAMES.has(basename)) return null;
 
-  const filename = routeSegments[routeSegments.length - 1];
-  const ext = path.extname(filename).toLowerCase();
-  const basename = path.basename(filename, ext).toLowerCase();
-  if (!PAGE_EXTENSIONS.has(ext) || IGNORED_BASENAMES.has(basename)) return null;
-
-  const routeParts = [...routeSegments];
-  routeParts[routeParts.length - 1] = basename === 'index' ? '' : path.basename(filename, ext);
-  const cleanParts = routeParts.filter(Boolean);
-  const routePath = cleanParts.length === 0 ? '/' : `/${cleanParts.join('/')}`;
+  const dirSegments = segments.slice(pagesIndex + 1, -1);
+  if (dirSegments[0] === 'api') return null;
+  const routePath = basename === 'index'
+    ? buildRoutePathFromSegments(dirSegments)
+    : buildRoutePathFromFile(dirSegments, path.basename(rawFilename, ext));
   return {
     ...buildRouteMeta(routePath),
     kind: 'route',
@@ -198,18 +287,96 @@ function getHtmlRouteMeta(relativePath) {
   const segments = normalizeSegments(relativePath);
   const filename = segments[segments.length - 1];
   const basename = path.basename(filename, ext).toLowerCase();
-  const routeParts = [...segments];
-  routeParts[routeParts.length - 1] = basename === 'index' ? '' : path.basename(filename, ext);
-  const cleanParts = routeParts.filter(Boolean);
-  const routePath = cleanParts.length === 0 ? '/' : `/${cleanParts.join('/')}`;
+  const routePath = basename === 'index'
+    ? buildRoutePathFromSegments(segments.slice(0, -1))
+    : buildRoutePathFromFile(segments.slice(0, -1), path.basename(filename, ext));
   return {
     ...buildRouteMeta(routePath),
     routeSource: 'html',
   };
 }
 
-function getRouteMeta(relativePath) {
-  return getAppRouteMeta(relativePath) || getPagesRouteMeta(relativePath) || getHtmlRouteMeta(relativePath);
+function getRemixRouteMeta(relativePath, frameworkHints = {}) {
+  if (!frameworkHints.remix) return null;
+
+  const segments = normalizeSegments(relativePath);
+  const routesIndex = segments.indexOf('routes');
+  if (routesIndex === -1 || segments[routesIndex - 1] !== 'app') return null;
+
+  const filename = segments[segments.length - 1];
+  const ext = path.extname(filename).toLowerCase();
+  if (!ROUTE_FILE_EXTENSIONS.has(ext)) return null;
+
+  const basename = path.basename(filename, ext);
+  const basenameLower = basename.toLowerCase();
+  if (IGNORED_BASENAMES.has(basenameLower) || basenameLower.endsWith('.server')) return null;
+
+  const dirSegments = segments.slice(routesIndex + 1, -1);
+  const fileSegments = basename.split('.');
+  const routePath = buildRoutePathFromSegments([...dirSegments, ...fileSegments], { framework: 'remix' });
+  return {
+    ...buildRouteMeta(routePath),
+    kind: 'route',
+    routeSource: 'remix',
+  };
+}
+
+function getSvelteKitRouteMeta(relativePath, frameworkHints = {}) {
+  if (!frameworkHints.svelteKit) return null;
+
+  const segments = normalizeSegments(relativePath);
+  if (segments[0] !== 'src' || segments[1] !== 'routes') return null;
+
+  const filename = segments[segments.length - 1];
+  const ext = path.extname(filename).toLowerCase();
+  const basename = path.basename(filename, ext).toLowerCase();
+  if (!SVELTE_PAGE_EXTENSIONS.has(ext) || basename !== '+page') return null;
+
+  const dirSegments = segments.slice(2, -1);
+  if (dirSegments[0] === 'api') return null;
+  const routePath = buildRoutePathFromSegments(dirSegments);
+  return {
+    ...buildRouteMeta(routePath),
+    kind: 'route',
+    routeSource: 'sveltekit',
+  };
+}
+
+function getSrcRoutesRouteMeta(relativePath, frameworkHints = {}) {
+  if (!frameworkHints.qwik && !frameworkHints.solidStart) return null;
+
+  const segments = normalizeSegments(relativePath);
+  if (segments[0] !== 'src' || segments[1] !== 'routes') return null;
+
+  const filename = segments[segments.length - 1];
+  const ext = path.extname(filename).toLowerCase();
+  if (!SRC_ROUTES_EXTENSIONS.has(ext)) return null;
+
+  const basename = path.basename(filename, ext).toLowerCase();
+  if (IGNORED_BASENAMES.has(basename) || basename.startsWith('+')) return null;
+
+  const dirSegments = segments.slice(2, -1);
+  if (dirSegments[0] === 'api' || basename === 'api') return null;
+
+  const routePath = basename === 'index'
+    ? buildRoutePathFromSegments(dirSegments)
+    : buildRoutePathFromFile(dirSegments, path.basename(filename, ext));
+  return {
+    ...buildRouteMeta(routePath),
+    kind: 'route',
+    routeSource: frameworkHints.qwik ? 'qwik-city' : 'src-routes',
+  };
+}
+
+function getRouteMeta(relativePath, frameworkHints = {}) {
+  return (
+    getRemixRouteMeta(relativePath, frameworkHints) ||
+    getSvelteKitRouteMeta(relativePath, frameworkHints) ||
+    getSrcRoutesRouteMeta(relativePath, frameworkHints) ||
+    getAppRouteMeta(relativePath) ||
+    getPagesRouteMeta(relativePath) ||
+    getHtmlRouteMeta(relativePath)
+  );
 }
 
 function findMatchingBracket(text, startIndex, openChar, closeChar) {
@@ -488,8 +655,145 @@ async function detectReactRouterRoutes(rootDir) {
   return routeMap;
 }
 
+async function readPackageJson(rootDir) {
+  try {
+    return JSON.parse(await fs.promises.readFile(path.join(rootDir, 'package.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function getPackageDependencySet(pkg) {
+  return new Set(
+    Object.keys({
+      ...(pkg?.dependencies || {}),
+      ...(pkg?.devDependencies || {}),
+      ...(pkg?.peerDependencies || {}),
+    })
+  );
+}
+
+function hasAnyDependency(dependencies, names) {
+  return names.some((name) => dependencies.has(name));
+}
+
+function detectFrameworkHints(rootDir, pkg) {
+  const dependencies = getPackageDependencySet(pkg);
+  const exists = (relativePath) => fs.existsSync(path.join(rootDir, relativePath));
+
+  return {
+    next: hasAnyDependency(dependencies, ['next']) || exists('next.config.js') || exists('next.config.mjs') || exists('next.config.ts'),
+    astro: hasAnyDependency(dependencies, ['astro']) || exists('astro.config.mjs') || exists('astro.config.ts') || exists('astro.config.js'),
+    nuxt: hasAnyDependency(dependencies, ['nuxt', 'nuxi']) || exists('nuxt.config.ts') || exists('nuxt.config.js'),
+    remix: hasAnyDependency(dependencies, ['@remix-run/dev', '@remix-run/react', 'remix']),
+    svelteKit: hasAnyDependency(dependencies, ['@sveltejs/kit']) || exists('svelte.config.js') || exists('svelte.config.ts'),
+    qwik: hasAnyDependency(dependencies, ['@builder.io/qwik-city', '@builder.io/qwik']),
+    solidStart: hasAnyDependency(dependencies, ['@solidjs/start', 'solid-start']),
+    vite: hasAnyDependency(dependencies, ['vite']) || exists('vite.config.ts') || exists('vite.config.js') || exists('vite.config.mjs'),
+    vitepress: hasAnyDependency(dependencies, ['vitepress']) || exists('.vitepress/config.ts') || exists('.vitepress/config.js'),
+    docusaurus: hasAnyDependency(dependencies, ['@docusaurus/core']),
+  };
+}
+
+function detectPackageManager(rootDir, pkg) {
+  const configured = typeof pkg?.packageManager === 'string' ? pkg.packageManager.split('@')[0] : '';
+  if (configured) return configured;
+  if (fs.existsSync(path.join(rootDir, 'pnpm-lock.yaml'))) return 'pnpm';
+  if (fs.existsSync(path.join(rootDir, 'yarn.lock'))) return 'yarn';
+  if (fs.existsSync(path.join(rootDir, 'bun.lockb')) || fs.existsSync(path.join(rootDir, 'bun.lock'))) return 'bun';
+  return 'npm';
+}
+
+function buildScriptCommand(packageManager, scriptName) {
+  if (!scriptName) return null;
+  if (packageManager === 'yarn') return `yarn ${scriptName}`;
+  if (packageManager === 'pnpm') return `pnpm ${scriptName}`;
+  if (packageManager === 'bun') return `bun run ${scriptName}`;
+  if (scriptName === 'start') return 'npm start';
+  return `npm run ${scriptName}`;
+}
+
+function extractScriptMatch(script, patterns) {
+  for (const pattern of patterns) {
+    const match = script.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+function normalizePreviewHost(host) {
+  if (!host) return 'localhost';
+  const normalized = host.replace(/^['"`]|['"`]$/g, '');
+  if (normalized === '0.0.0.0' || normalized === '::' || normalized === '[::]' || normalized === '[::1]') {
+    return 'localhost';
+  }
+  return normalized;
+}
+
+function detectDefaultPreviewPort(frameworkHints, scriptBody = '') {
+  if (frameworkHints.astro) return 4321;
+  if (frameworkHints.vite || frameworkHints.svelteKit || frameworkHints.qwik || frameworkHints.solidStart || frameworkHints.vitepress || /\bvite\b/i.test(scriptBody)) {
+    return 5173;
+  }
+  if (frameworkHints.next || frameworkHints.nuxt || frameworkHints.remix || frameworkHints.docusaurus) {
+    return 3000;
+  }
+  return 3000;
+}
+
+function detectPortFromConfigFiles(rootDir) {
+  for (const relativePath of CONFIG_SITE_FILE_CANDIDATES) {
+    const absolutePath = path.join(rootDir, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    try {
+      const source = fs.readFileSync(absolutePath, 'utf8');
+      const portMatch = source.match(/\bport\s*:\s*(\d{2,5})\b/);
+      if (portMatch) return Number(portMatch[1]);
+    } catch {}
+  }
+  return null;
+}
+
+function detectHostFromConfigFiles(rootDir) {
+  for (const relativePath of CONFIG_SITE_FILE_CANDIDATES) {
+    const absolutePath = path.join(rootDir, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    try {
+      const source = fs.readFileSync(absolutePath, 'utf8');
+      const hostMatch = source.match(/\bhost\s*:\s*(["'`])([^"'`]+)\1/);
+      if (hostMatch) return normalizePreviewHost(hostMatch[2]);
+    } catch {}
+  }
+  return null;
+}
+
+async function detectDevServerInfo(rootDir, pkg, frameworkHints) {
+  const scripts = pkg?.scripts || {};
+  const scriptName = ['dev', 'start', 'serve', 'preview'].find((name) => typeof scripts[name] === 'string' && scripts[name].trim());
+  const packageManager = detectPackageManager(rootDir, pkg);
+
+  if (!scriptName) {
+    return { command: null, scriptName: null, scriptBody: '', packageManager, port: null, host: null };
+  }
+
+  const scriptBody = scripts[scriptName].trim();
+  const parsedPort = extractScriptMatch(scriptBody, SCRIPT_PORT_PATTERNS);
+  const parsedHost = extractScriptMatch(scriptBody, SCRIPT_HOST_PATTERNS);
+  const configuredPort = detectPortFromConfigFiles(rootDir);
+  const configuredHost = detectHostFromConfigFiles(rootDir);
+
+  return {
+    command: buildScriptCommand(packageManager, scriptName),
+    scriptName,
+    scriptBody,
+    packageManager,
+    port: Number(parsedPort || configuredPort || detectDefaultPreviewPort(frameworkHints, scriptBody)),
+    host: normalizePreviewHost(parsedHost || configuredHost || 'localhost'),
+  };
+}
+
 function detectLocalBuiltPreviewRoot(rootDir) {
-  for (const dirName of ['dist', 'build']) {
+  for (const dirName of ['dist', 'build', 'out', '.output/public']) {
     const indexFile = path.join(rootDir, dirName, 'index.html');
     if (fs.existsSync(indexFile)) {
       return LOCAL_DIST_PREVIEW_BASE;
@@ -527,7 +831,7 @@ function execFileAsync(command, args) {
   });
 }
 
-async function detectRunningLocalPreviewBaseUrl(rootDir) {
+async function detectRunningLocalPreviewBaseUrl(rootDir, preferredPorts = []) {
   if (process.platform === 'win32') return null;
 
   let listeningPortsOutput;
@@ -563,6 +867,14 @@ async function detectRunningLocalPreviewBaseUrl(rootDir) {
   if (candidates.length === 0) return null;
 
   candidates.sort((a, b) => {
+    const aPreferredIndex = preferredPorts.indexOf(a.port);
+    const bPreferredIndex = preferredPorts.indexOf(b.port);
+    if (aPreferredIndex !== -1 || bPreferredIndex !== -1) {
+      const aScore = aPreferredIndex === -1 ? preferredPorts.length + 100 : aPreferredIndex;
+      const bScore = bPreferredIndex === -1 ? preferredPorts.length + 100 : bPreferredIndex;
+      if (aScore !== bScore) return aScore - bScore;
+    }
+
     const aIndex = LOCAL_PREVIEW_PORT_PREFERENCE.indexOf(a.port);
     const bIndex = LOCAL_PREVIEW_PORT_PREFERENCE.indexOf(b.port);
     const aScore = aIndex === -1 ? LOCAL_PREVIEW_PORT_PREFERENCE.length + a.port : aIndex;
@@ -607,7 +919,43 @@ async function isReachablePreviewBaseUrl(baseUrl) {
   }
 }
 
-async function detectPreviewBaseUrl(rootDir) {
+function detectConfiguredSiteUrl(rootDir) {
+  for (const relativePath of CONFIG_SITE_FILE_CANDIDATES) {
+    const absolutePath = path.join(rootDir, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    try {
+      const source = fs.readFileSync(absolutePath, 'utf8');
+      let match;
+      while ((match = CONFIG_URL_KEY_REGEX.exec(source))) {
+        const normalized = normalizePreviewBaseUrl(match[3]);
+        if (normalized) {
+          CONFIG_URL_KEY_REGEX.lastIndex = 0;
+          return normalized;
+        }
+      }
+      CONFIG_URL_KEY_REGEX.lastIndex = 0;
+    } catch {}
+  }
+
+  const cnameFile = path.join(rootDir, 'CNAME');
+  if (fs.existsSync(cnameFile)) {
+    try {
+      const normalized = normalizePreviewBaseUrl(fs.readFileSync(cnameFile, 'utf8').trim());
+      if (normalized) return normalized;
+    } catch {}
+  }
+
+  return null;
+}
+
+function detectLikelyLocalPreviewBaseUrl(devServerInfo) {
+  if (!devServerInfo?.command || !Number.isFinite(devServerInfo.port) || devServerInfo.port <= 0) {
+    return null;
+  }
+  return `http://${normalizePreviewHost(devServerInfo.host)}:${devServerInfo.port}`;
+}
+
+async function detectPreviewBaseUrl(rootDir, options = {}) {
   const cached = previewBaseUrlCache.get(rootDir);
   if (cached && Date.now() - cached.timestamp < PREVIEW_BASE_URL_CACHE_TTL_MS) {
     return cached.value;
@@ -618,7 +966,14 @@ async function detectPreviewBaseUrl(rootDir) {
     return value;
   };
 
-  const localPreviewBaseUrl = await detectRunningLocalPreviewBaseUrl(rootDir);
+  const pkg = options.pkg || await readPackageJson(rootDir);
+  const frameworkHints = options.frameworkHints || detectFrameworkHints(rootDir, pkg);
+  const devServerInfo = options.devServerInfo || await detectDevServerInfo(rootDir, pkg, frameworkHints);
+
+  const localPreviewBaseUrl = await detectRunningLocalPreviewBaseUrl(
+    rootDir,
+    Number.isFinite(devServerInfo.port) ? [devServerInfo.port] : []
+  );
   if (localPreviewBaseUrl) return remember(localPreviewBaseUrl);
 
   const localBuiltPreviewBase = detectLocalBuiltPreviewRoot(rootDir);
@@ -636,14 +991,9 @@ async function detectPreviewBaseUrl(rootDir) {
     if (normalizedConfigUrl) return remember(normalizedConfigUrl);
   } catch {}
 
-  const packageJsonFile = path.join(rootDir, 'package.json');
-  let packageName = null;
-  try {
-    const pkg = JSON.parse(await fs.promises.readFile(packageJsonFile, 'utf8'));
-    packageName = typeof pkg.name === 'string' ? pkg.name.trim() : null;
-    const normalizedHomepage = normalizePreviewBaseUrl(pkg.homepage);
-    if (normalizedHomepage) return remember(normalizedHomepage);
-  } catch {}
+  const packageName = typeof pkg?.name === 'string' ? pkg.name.trim() : null;
+  const normalizedHomepage = normalizePreviewBaseUrl(pkg?.homepage);
+  if (normalizedHomepage) return remember(normalizedHomepage);
 
   const layoutCandidates = [
     path.join(rootDir, 'app', 'layout.tsx'),
@@ -669,6 +1019,9 @@ async function detectPreviewBaseUrl(rootDir) {
     } catch {}
   }
 
+  const configuredSiteUrl = detectConfiguredSiteUrl(rootDir);
+  if (configuredSiteUrl) return remember(configuredSiteUrl);
+
   const vercelProjectFile = path.join(rootDir, '.vercel', 'project.json');
   try {
     const vercelProject = JSON.parse(await fs.promises.readFile(vercelProjectFile, 'utf8'));
@@ -689,13 +1042,19 @@ async function detectPreviewBaseUrl(rootDir) {
     }
   }
 
+  const likelyLocalPreviewBaseUrl = detectLikelyLocalPreviewBaseUrl(devServerInfo);
+  if (likelyLocalPreviewBaseUrl) return remember(likelyLocalPreviewBaseUrl);
+
   return remember(null);
 }
 
 async function scanDirectory(rootDir) {
-  const previewBaseUrl = await detectPreviewBaseUrl(rootDir);
+  const pkg = await readPackageJson(rootDir);
+  const frameworkHints = detectFrameworkHints(rootDir, pkg);
+  const devServerInfo = await detectDevServerInfo(rootDir, pkg, frameworkHints);
+  const previewBaseUrl = await detectPreviewBaseUrl(rootDir, { pkg, frameworkHints, devServerInfo });
   const reactRouterRoutes = await detectReactRouterRoutes(rootDir);
-  const entries = await fg(['**/*.{html,htm,jsx,tsx,svg}'], {
+  const entries = await fg(['**/*.{html,htm,jsx,tsx,js,ts,svg,vue,svelte,astro,md,mdx,svx}'], {
     cwd: rootDir,
     ignore: [
       '**/node_modules/**',
@@ -703,6 +1062,8 @@ async function scanDirectory(rootDir) {
       '.*/**',          // top-level dotfolders
       '**/dist/**',
       '**/build/**',
+      '**/out/**',
+      '**/.output/**',
       '**/.next/**',
       '**/.designvault/**',
     ],
@@ -721,10 +1082,15 @@ async function scanDirectory(rootDir) {
       const absolutePath = path.join(rootDir, relativePath);
       try {
         const stat = await fs.promises.stat(absolutePath);
-        const ext = path.extname(relativePath).slice(1);
+        const extWithDot = path.extname(relativePath).toLowerCase();
+        const ext = extWithDot.slice(1);
         const filename = path.basename(relativePath);
         const name = path.basename(relativePath, path.extname(relativePath));
-        const routeMeta = reactRouterRoutes.get(relativePath) || getRouteMeta(relativePath);
+        const routeMeta = reactRouterRoutes.get(relativePath) || getRouteMeta(relativePath, frameworkHints);
+        if (!GENERAL_FILE_EXTENSIONS.has(extWithDot) && !routeMeta) {
+          return null;
+        }
+
         const previewPath = routeMeta?.kind === 'route' ? createPreviewRoutePath(routeMeta.routePath) : '';
         const previewUrl =
           routeMeta?.kind === 'route' && previewBaseUrl
@@ -808,34 +1174,56 @@ async function scanDirectory(rootDir) {
 
   // Check if the preview source is reachable
   let devServerUp = false;
-  let devCommand = null;
+  let devCommand = devServerInfo.command;
   let isLocal = false;
   if (previewBaseUrl) {
-    try {
-      const urlObj = new URL(previewBaseUrl);
-      isLocal = urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1';
-    } catch {}
+    const isBuiltPreview = previewBaseUrl.startsWith('/');
+    const runningLocalPreviewBaseUrl = await detectRunningLocalPreviewBaseUrl(
+      rootDir,
+      Number.isFinite(devServerInfo.port) ? [devServerInfo.port] : []
+    );
+    const hasMatchingRunningLocalPreview =
+      !!runningLocalPreviewBaseUrl &&
+      previewBaseUrl.replace(/\/+$/, '') === runningLocalPreviewBaseUrl.replace(/\/+$/, '');
 
-    if (isLocal) {
-      // Local dev server — ping to check if it's running
+    if (isBuiltPreview) {
+      isLocal = true;
+      devServerUp = true;
+    } else if (hasMatchingRunningLocalPreview) {
+      isLocal = true;
+      devServerUp = true;
+    } else {
       try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 2000);
-        const res = await fetch(previewBaseUrl, { method: 'HEAD', signal: controller.signal });
-        clearTimeout(t);
-        devServerUp = res.ok || res.status < 500;
-      } catch {
+        const urlObj = new URL(previewBaseUrl);
+        isLocal = urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1' || urlObj.hostname === '::1';
+      } catch {}
+    }
+
+    if (isBuiltPreview || hasMatchingRunningLocalPreview) {
+      devServerUp = true;
+    } else if (isLocal) {
+      // Local dev server — ping to check if it's running
+      if (devServerInfo.command) {
         devServerUp = false;
+      } else {
+        try {
+          const controller = new AbortController();
+          const t = setTimeout(() => controller.abort(), 2000);
+          const res = await fetch(previewBaseUrl, { method: 'HEAD', signal: controller.signal });
+          clearTimeout(t);
+          devServerUp = res.ok || res.status < 500;
+        } catch {
+          devServerUp = false;
+        }
       }
     } else {
       // Remote URL (vercel, netlify, etc.) — this is a fallback because
       // no local dev server was detected. Show the offline nudge so the
       // user knows to start their local server for proper previews.
-      const hasLocalFramework = await detectDevCommand(rootDir) !== null;
+      const hasLocalFramework = !!devServerInfo.command;
       devServerUp = !hasLocalFramework;
     }
 
-    devCommand = await detectDevCommand(rootDir);
     for (const file of result) {
       if (file.previewUrl) {
         file.devServerUp = devServerUp;
@@ -859,14 +1247,10 @@ async function scanDirectory(rootDir) {
 }
 
 async function detectDevCommand(rootDir) {
-  try {
-    const pkg = JSON.parse(await fs.promises.readFile(path.join(rootDir, 'package.json'), 'utf8'));
-    const scripts = pkg.scripts || {};
-    if (scripts.dev) return 'npm run dev';
-    if (scripts.start) return 'npm start';
-    if (scripts.serve) return 'npm run serve';
-  } catch {}
-  return null;
+  const pkg = await readPackageJson(rootDir);
+  const frameworkHints = detectFrameworkHints(rootDir, pkg);
+  const info = await detectDevServerInfo(rootDir, pkg, frameworkHints);
+  return info.command;
 }
 
 module.exports = { scanDirectory, simpleHash };
