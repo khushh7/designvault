@@ -80,6 +80,7 @@ export default function DetailPanel({ file, onClose, onRename, onSetStatus, onSe
           ) : file.previewUrl && !previewFailed ? (
             <iframe
               src={file.previewUrl}
+              sandbox="allow-scripts"
               title={title}
               onError={() => setPreviewFailed(true)}
             />

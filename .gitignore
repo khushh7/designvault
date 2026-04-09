@@ -1,5 +1,15 @@
 node_modules/
 dist/
 .designvault/
+.designvault.json
 .DS_Store
+Thumbs.db
 *.log
+.env
+.env.*
+.vscode/
+.idea/
+*.pem
+*.key
+supabase/
+landing/

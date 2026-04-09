@@ -100,6 +100,7 @@ export default function Card({ file, onClick, onContextMenu, onToggleFavorite })
             <iframe
               className={iframeLoaded ? 'iframe-loaded' : 'iframe-loading'}
               src={file.previewUrl}
+              sandbox="allow-scripts"
               title={iframeTitle}
               loading="lazy"
               onLoad={() => setIframeLoaded(true)}

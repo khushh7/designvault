@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { startServer } = require('./server/index.js');
 const { loadGlobalConfig } = require('./server/config.js');
+const { trackFirstRun } = require('./server/telemetry.js');
 const { version: VERSION } = require('./package.json');
 
 async function main() {
@@ -33,6 +34,8 @@ async function main() {
     console.log(`  Found ${totalFiles} design files (${versionStacks} version stacks)`);
   }
   console.log(`  ✓ Ready! Opening http://localhost:${port}\n`);
+
+  trackFirstRun(VERSION);
 
   const open = (await import('open')).default;
   await open(`http://localhost:${port}`);

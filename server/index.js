@@ -98,8 +98,15 @@ async function startServer(initialRootDir) {
   }
 
   const app = express();
-  app.use(cors());
+  app.use(cors({ origin: /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/ }));
   app.use(express.json());
+
+  // Security headers
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    next();
+  });
 
   // Serve built frontend
   const distDir = path.join(__dirname, '..', 'dist');
@@ -150,12 +157,19 @@ async function startServer(initialRootDir) {
     };
   }
 
-  function getRequestedRoot(req) {
+  async function getRequestedRoot(req) {
     const rawRoot =
       (req.body && req.body.rootDir) ||
       (req.query && req.query.rootDir) ||
       rootDir;
-    return path.resolve(rawRoot);
+    const resolved = path.resolve(rawRoot);
+    // If it's the current rootDir, allow it
+    if (resolved === path.resolve(rootDir)) return resolved;
+    // Otherwise, it must be a registered project directory
+    const global = await loadGlobalConfig();
+    const registered = (global.projects || []).some((p) => path.resolve(p.directory) === resolved);
+    if (!registered) throw new Error('Directory is not a registered project');
+    return resolved;
   }
 
   async function getScanDataFor(targetRoot) {
@@ -259,18 +273,19 @@ async function startServer(initialRootDir) {
   });
 
   app.get('/api/files/:id/content', async (req, res) => {
-    const targetRoot = getRequestedRoot(req);
+    let targetRoot;
+    try {
+      targetRoot = await getRequestedRoot(req);
+    } catch {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     const targetScanData = await getScanDataFor(targetRoot);
     const file = findFileByIdInScan(targetScanData, req.params.id);
     if (!file) return res.status(404).json({ error: 'File not found' });
 
-    try {
-      const resolved = path.resolve(file.absolutePath);
-      const root = path.resolve(targetRoot);
-      if (!resolved.startsWith(root + path.sep) && resolved !== root) {
-        throw new Error('Path traversal detected');
-      }
-    } catch {
+    const resolved = path.resolve(file.absolutePath);
+    const root = path.resolve(targetRoot);
+    if (!resolved.startsWith(root + path.sep) && resolved !== root) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -289,6 +304,13 @@ async function startServer(initialRootDir) {
     const requestPath = req.path.replace(/^\/__project_preview__/, '') || '/';
     const relativePath = requestPath.replace(/^\/+/, '');
     const candidateFile = path.join(previewDir, relativePath);
+
+    // Prevent directory traversal
+    const resolvedCandidate = path.resolve(candidateFile);
+    const resolvedPreviewDir = path.resolve(previewDir);
+    if (!resolvedCandidate.startsWith(resolvedPreviewDir + path.sep) && resolvedCandidate !== resolvedPreviewDir) {
+      return res.status(403).send('Access denied');
+    }
 
     try {
       if (relativePath) {
@@ -309,7 +331,7 @@ async function startServer(initialRootDir) {
   // Reveal file in Finder (macOS) or file manager
   app.post('/api/files/:id/reveal', async (req, res) => {
     try {
-      const targetRoot = getRequestedRoot(req);
+      const targetRoot = await getRequestedRoot(req);
       const targetScanData = await getScanDataFor(targetRoot);
       const file = findFileByIdInScan(targetScanData, req.params.id);
       if (!file) return res.status(404).json({ error: 'File not found' });
@@ -331,7 +353,7 @@ async function startServer(initialRootDir) {
   // Open file's directory in a new terminal tab
   app.post('/api/files/:id/terminal', async (req, res) => {
     try {
-      const targetRoot = getRequestedRoot(req);
+      const targetRoot = await getRequestedRoot(req);
       const targetScanData = await getScanDataFor(targetRoot);
       const file = findFileByIdInScan(targetScanData, req.params.id);
       if (!file) return res.status(404).json({ error: 'File not found' });
@@ -353,8 +375,12 @@ async function startServer(initialRootDir) {
 
   // Open file's directory in a code editor / AI tool
   app.post('/api/files/:id/open-in', async (req, res) => {
+    const ALLOWED_TOOLS = ['claude-code', 'codex', 'cursor'];
+    if (!req.body.tool || !ALLOWED_TOOLS.includes(req.body.tool)) {
+      return res.status(400).json({ error: `tool must be one of: ${ALLOWED_TOOLS.join(', ')}` });
+    }
     try {
-      const targetRoot = getRequestedRoot(req);
+      const targetRoot = await getRequestedRoot(req);
       const targetScanData = await getScanDataFor(targetRoot);
       const file = findFileByIdInScan(targetScanData, req.params.id);
       if (!file) return res.status(404).json({ error: 'File not found' });
@@ -392,8 +418,11 @@ async function startServer(initialRootDir) {
   });
 
   app.post('/api/files/:id/rename', async (req, res) => {
+    if (!req.body.newName || typeof req.body.newName !== 'string') {
+      return res.status(400).json({ error: 'newName is required and must be a string' });
+    }
     try {
-      const targetRoot = getRequestedRoot(req);
+      const targetRoot = await getRequestedRoot(req);
       const targetScanData = await getScanDataFor(targetRoot);
       await renameFile(targetRoot, req.params.id, req.body.newName, targetScanData);
       if (targetRoot === rootDir) {
@@ -407,8 +436,11 @@ async function startServer(initialRootDir) {
   });
 
   app.post('/api/files/:id/move', async (req, res) => {
+    if (!req.body.destination || typeof req.body.destination !== 'string') {
+      return res.status(400).json({ error: 'destination is required and must be a string' });
+    }
     try {
-      const targetRoot = getRequestedRoot(req);
+      const targetRoot = await getRequestedRoot(req);
       const targetScanData = await getScanDataFor(targetRoot);
       await moveFile(targetRoot, req.params.id, req.body.destination, targetScanData);
       if (targetRoot === rootDir) {
@@ -423,7 +455,7 @@ async function startServer(initialRootDir) {
 
   app.post('/api/files/:id/duplicate', async (req, res) => {
     try {
-      const targetRoot = getRequestedRoot(req);
+      const targetRoot = await getRequestedRoot(req);
       const targetScanData = await getScanDataFor(targetRoot);
       await duplicateFile(targetRoot, req.params.id, targetScanData);
       if (targetRoot === rootDir) {
@@ -438,7 +470,7 @@ async function startServer(initialRootDir) {
 
   app.delete('/api/files/:id', async (req, res) => {
     try {
-      const targetRoot = getRequestedRoot(req);
+      const targetRoot = await getRequestedRoot(req);
       const targetScanData = await getScanDataFor(targetRoot);
       await deleteFile(targetRoot, req.params.id, targetScanData);
       if (targetRoot === rootDir) {
@@ -453,7 +485,7 @@ async function startServer(initialRootDir) {
 
   app.post('/api/files/:id/restore', async (req, res) => {
     try {
-      const targetRoot = getRequestedRoot(req);
+      const targetRoot = await getRequestedRoot(req);
       await restoreFile(targetRoot, req.params.id);
       if (targetRoot === rootDir) {
         await rescan();
@@ -499,50 +531,70 @@ async function startServer(initialRootDir) {
   });
 
   app.put('/api/config/favorite/:id', async (req, res) => {
-    const targetRoot = getRequestedRoot(req);
-    const global = await loadGlobalConfig();
-    const key = favoriteKey(targetRoot, req.params.id);
-    const idx = (global.favorites || []).indexOf(key);
-    if (idx >= 0) global.favorites.splice(idx, 1);
-    else global.favorites.push(key);
-    const updated = await saveGlobalConfig({ favorites: global.favorites });
-    res.json({ favorites: updated.favorites || [] });
+    try {
+      const targetRoot = await getRequestedRoot(req);
+      const global = await loadGlobalConfig();
+      const key = favoriteKey(targetRoot, req.params.id);
+      const idx = (global.favorites || []).indexOf(key);
+      if (idx >= 0) global.favorites.splice(idx, 1);
+      else global.favorites.push(key);
+      const updated = await saveGlobalConfig({ favorites: global.favorites });
+      res.json({ favorites: updated.favorites || [] });
+    } catch (err) {
+      res.status(403).json({ error: err.message });
+    }
   });
 
   app.put('/api/config/tags/:id', async (req, res) => {
-    const targetRoot = getRequestedRoot(req);
-    const targetConfig = await getConfigFor(targetRoot);
-    targetConfig.tags[req.params.id] = req.body.tags || [];
-    await saveConfig(targetRoot, targetConfig);
-    if (targetRoot === rootDir) config = targetConfig;
-    res.json(targetConfig);
+    try {
+      const targetRoot = await getRequestedRoot(req);
+      const targetConfig = await getConfigFor(targetRoot);
+      targetConfig.tags[req.params.id] = req.body.tags || [];
+      await saveConfig(targetRoot, targetConfig);
+      if (targetRoot === rootDir) config = targetConfig;
+      res.json(targetConfig);
+    } catch (err) {
+      res.status(403).json({ error: err.message });
+    }
   });
 
   app.put('/api/config/notes/:id', async (req, res) => {
-    const targetRoot = getRequestedRoot(req);
-    const targetConfig = await getConfigFor(targetRoot);
-    targetConfig.notes[req.params.id] = req.body.note || '';
-    await saveConfig(targetRoot, targetConfig);
-    if (targetRoot === rootDir) config = targetConfig;
-    res.json(targetConfig);
+    try {
+      const targetRoot = await getRequestedRoot(req);
+      const targetConfig = await getConfigFor(targetRoot);
+      targetConfig.notes[req.params.id] = req.body.note || '';
+      await saveConfig(targetRoot, targetConfig);
+      if (targetRoot === rootDir) config = targetConfig;
+      res.json(targetConfig);
+    } catch (err) {
+      res.status(403).json({ error: err.message });
+    }
   });
 
   app.put('/api/config/status/:id', async (req, res) => {
-    const targetRoot = getRequestedRoot(req);
-    const targetConfig = await getConfigFor(targetRoot);
-    targetConfig.statuses[req.params.id] = req.body.status || 'draft';
-    await saveConfig(targetRoot, targetConfig);
-    if (targetRoot === rootDir) config = targetConfig;
-    res.json(targetConfig);
+    try {
+      const targetRoot = await getRequestedRoot(req);
+      const targetConfig = await getConfigFor(targetRoot);
+      targetConfig.statuses[req.params.id] = req.body.status || 'draft';
+      await saveConfig(targetRoot, targetConfig);
+      if (targetRoot === rootDir) config = targetConfig;
+      res.json(targetConfig);
+    } catch (err) {
+      res.status(403).json({ error: err.message });
+    }
   });
 
   app.put('/api/config/project/:id', async (req, res) => {
-    const targetRoot = getRequestedRoot(req);
-    const targetConfig = await getConfigFor(targetRoot);
-    targetConfig.projects[req.params.id] = req.body.project || '';
-    await saveConfig(targetRoot, targetConfig);
-    if (targetRoot === rootDir) config = targetConfig;
-    res.json(targetConfig);
+    try {
+      const targetRoot = await getRequestedRoot(req);
+      const targetConfig = await getConfigFor(targetRoot);
+      targetConfig.projects[req.params.id] = req.body.project || '';
+      await saveConfig(targetRoot, targetConfig);
+      if (targetRoot === rootDir) config = targetConfig;
+      res.json(targetConfig);
+    } catch (err) {
+      res.status(403).json({ error: err.message });
+    }
   });
 
   // SSE endpoint
