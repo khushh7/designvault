@@ -271,8 +271,8 @@ export default function App() {
   })
 
   let displayFiles = [...filteredFiles]
+  displayFiles.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt))
   if (activeFilter.type === 'recent') {
-    displayFiles.sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt))
     displayFiles = displayFiles.slice(0, 10)
   }
 

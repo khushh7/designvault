@@ -117,7 +117,7 @@ function getBaseName(filename) {
 
   // No -vN found. Still strip trailing modifiers like -final, -copy, -2, etc.
   // so that "hero.html" and "hero-final.html" and "hero-copy.html" group together.
-  name = name.replace(/[-_](final|copy|revised|new|old|backup|alt)$/i, '');
+  name = name.replace(/[-_](final|copy|revised|new|old|backup|alt|dark|light)$/i, '');
   name = name.replace(/[-_]\d+$/i, '');
   return name.toLowerCase();
 }
