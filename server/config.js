@@ -50,7 +50,9 @@ async function updateConfig(rootDir, partial) {
 async function loadGlobalConfig() {
   try {
     const raw = await fs.promises.readFile(GLOBAL_CONFIG_FILE, 'utf-8');
-    return { projects: [], lastDir: null, favorites: [], ...JSON.parse(raw) };
+    const config = { projects: [], lastDir: null, favorites: [], ...JSON.parse(raw) };
+    config.projects.sort((a, b) => new Date(b.lastScanned || b.createdAt) - new Date(a.lastScanned || a.createdAt));
+    return config;
   } catch {
     return { projects: [], lastDir: null, favorites: [] };
   }
